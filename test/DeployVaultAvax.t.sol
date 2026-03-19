@@ -11,6 +11,7 @@ import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IMorpho, MarketParams, Id, Position} from "morpho-blue/src/interfaces/IMorpho.sol";
 import {DeployVaultV2WithMarketAdapter} from "../script/DeployVaultV2WithMarketAdapter.s.sol";
 import {MarketParamsLib} from "morpho-blue/src/libraries/MarketParamsLib.sol";
+import {OracleMock} from "./mocks/OracleMock.sol";
 
 /**
  * @title DeployVaultAvaxTest
@@ -23,11 +24,15 @@ contract DeployVaultAvaxTest is Test {
     address constant ADAPTER_REGISTRY = 0x66dC122CF454576684Ad78A2800a8Eb052b2E9a6;
     address constant MORPHO = 0x895383274303AA19fe978AFB4Ac55C7f094f982C;
     address constant ADAPTIVE_CURVE_IRM = 0xb6ac9477D574EE2a7BF32d2475b303fb70968AA4;
-    address constant USDC = 0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E;
 
-    // Test market: USDC/cbBTC with Adaptive Curve IRM
-    bytes32 constant MARKET_ID = 0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836;
-    address constant CBBTC = 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf;
+    // Tokens
+    address constant MXNB = 0xF197FFC28c23E0309B5559e7a166f2c6164C80aA; // Vault asset and market loan token (6 decimals)
+    address constant USDC = 0xB97EF9Ef8734C71904D8002F8b6Bc66Dd9c48a6E; // Market collateral token (6 decimals)
+
+    // Test market: MXNB/USDC with Adaptive Curve IRM
+    // Note: Update MARKET_ID to the actual MXNB/USDC market on Avalanche
+    bytes32 MARKET_ID = 0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836; // Placeholder - update for MXNB/USDC
+    address constant COLLATERAL_TOKEN = USDC;
 
     uint256 constant DEAD_DEPOSIT_AMOUNT = 1e12; // For 6 decimal asset
     uint128 constant COLLATERAL_TOKEN_CAP = type(uint128).max; // Unlimited for testing
@@ -38,6 +43,7 @@ contract DeployVaultAvaxTest is Test {
     // Deployed contracts - set by _deploy()
     VaultV2 vault;
     address adapter;
+    OracleMock oracle;
 
     /**
      * @notice Structure for market creation parameters
@@ -52,7 +58,14 @@ contract DeployVaultAvaxTest is Test {
 
     function setUp() public {
         vm.createSelectFork("https://api.avax.network/ext/bc/C/rpc");
-        deal(USDC, deployer, 100_000_000e6);
+        deal(MXNB, deployer, 100_000_000e6); // 100M MXNB for vault operations
+        deal(USDC, deployer, 100_000_000e6); // 100M USDC for market operations and collateral
+
+        // Deploy oracle for MXNB/USDC market
+        // Price formula: price_in_usd * 10^(loan_decimals - collateral_decimals + 36)
+        // 1 USDC = 17.9 MXNB, so: 17.9 * 10^(6 - 6 + 36) = 179 * 1e35
+        oracle = new OracleMock();
+        oracle.setPrice(179 * 1e35);
     }
 
     /**
@@ -282,11 +295,6 @@ contract DeployVaultAvaxTest is Test {
         }
     }
 
-    function setUp() public {
-        vm.createSelectFork("https://api.avax.network/ext/bc/C/rpc");
-        deal(USDC, deployer, 100_000_000e6);
-    }
-
     /**
      * @notice Deploy without a market (liquidityAdapter not set)
      * @dev Dead deposit stays idle in vault
@@ -294,9 +302,9 @@ contract DeployVaultAvaxTest is Test {
     function _deployWithoutMarket() internal {
         vm.startPrank(deployer);
 
-        // Deploy VaultV2
+        // Deploy VaultV2 with MXNB as asset
         bytes32 salt = keccak256(abi.encodePacked(block.timestamp, gasleft()));
-        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, USDC, salt));
+        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, MXNB, salt));
 
         // Set temporary curator
         vault.setCurator(deployer);
@@ -329,7 +337,7 @@ contract DeployVaultAvaxTest is Test {
         vault.abdicate(IVaultV2.setReceiveAssetsGate.selector);
 
         // Dead deposit (stays idle in vault since no liquidityAdapter)
-        IERC20(USDC).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
+        IERC20(MXNB).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
         vault.deposit(DEAD_DEPOSIT_AMOUNT, address(0xdead));
 
         vm.stopPrank();
@@ -342,9 +350,9 @@ contract DeployVaultAvaxTest is Test {
     function _deployWithMarket() internal {
         vm.startPrank(deployer);
 
-        // Deploy VaultV2
+        // Deploy VaultV2 with MXNB as asset
         bytes32 salt = keccak256(abi.encodePacked(block.timestamp, gasleft()));
-        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, USDC, salt));
+        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, MXNB, salt));
 
         // Set temporary curator
         vault.setCurator(deployer);
@@ -380,7 +388,7 @@ contract DeployVaultAvaxTest is Test {
         _configureMarketAndLiquidityAdapter();
 
         // Dead deposit (allocates to market via liquidityAdapter)
-        IERC20(USDC).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
+        IERC20(MXNB).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
         vault.deposit(DEAD_DEPOSIT_AMOUNT, address(0xdead));
 
         vm.stopPrank();
@@ -438,15 +446,16 @@ contract DeployVaultAvaxTest is Test {
     /**
      * @notice Configure market with encoded MarketParams for liquidityAdapterAndData
      * @dev Enhanced to create market if running on local/test networks
+     * @notice Market is MXNB/USDC with MXNB as loan token and USDC as collateral
      */
     function _configureMarketAndLiquidityAdapter() internal {
         // Look up MarketParams from Morpho
         MarketParams memory marketParams = IMorpho(MORPHO).idToMarketParams(Id.wrap(MARKET_ID));
 
-        // Validate market params
-        require(marketParams.loanToken == USDC, "Market loanToken mismatch");
+        // Validate market params (MXNB/USDC market)
+        require(marketParams.loanToken == MXNB, "Market loanToken should be MXNB");
         require(marketParams.irm == ADAPTIVE_CURVE_IRM, "Market IRM mismatch");
-        require(marketParams.collateralToken == CBBTC, "Market collateralToken mismatch");
+        require(marketParams.collateralToken == USDC, "Market collateralToken should be USDC");
 
         // Attempt to create market if it doesn't exist
         // This is safe to call for forks where the market already exists
@@ -461,12 +470,12 @@ contract DeployVaultAvaxTest is Test {
         uint256 requiredDeadDeposit = DEAD_DEPOSIT_AMOUNT;
         Position memory deadPosition = IMorpho(MORPHO).position(Id.wrap(MARKET_ID), address(0xdead));
         if (deadPosition.supplyShares < requiredDeadDeposit) {
-            IERC20(USDC).approve(MORPHO, requiredDeadDeposit);
+            IERC20(MXNB).approve(MORPHO, requiredDeadDeposit);
             IMorpho(MORPHO).supply(marketParams, requiredDeadDeposit, 0, address(0xdead), hex"");
         }
 
-        // Configure collateral token caps
-        bytes memory collateralTokenIdData = abi.encode("collateralToken", marketParams.collateralToken);
+        // Configure collateral token caps (USDC collateral)
+        bytes memory collateralTokenIdData = abi.encode("collateralToken", USDC);
         vault.submit(abi.encodeCall(vault.increaseAbsoluteCap, (collateralTokenIdData, COLLATERAL_TOKEN_CAP)));
         vault.submit(abi.encodeCall(vault.increaseRelativeCap, (collateralTokenIdData, 1e18)));
         vault.increaseAbsoluteCap(collateralTokenIdData, COLLATERAL_TOKEN_CAP);
@@ -480,10 +489,109 @@ contract DeployVaultAvaxTest is Test {
         vault.increaseRelativeCap(marketIdData, 1e18);
     }
 
+    function test_CompleteMarketSetup() public {
+        // Step 1: Define market parameters
+        MarketCreationParams memory params = MarketCreationParams({
+            loanToken: MXNB,
+            collateralToken: USDC,
+            oracle: address(oracle),  // Your mock oracle
+            irm: ADAPTIVE_CURVE_IRM,
+            lltv: 0.8e18  // 80% LTV
+        });
+        
+        // Step 2: Create the market (requires owner)
+        address morphoOwner = deployer; // Get your Morpho owner
+        (MarketParams memory marketParams, Id marketId) = 
+            _createMarketWithOwner(params, morphoOwner);
+        
+        // Step 3: Supply initial liquidity
+        uint256 liquidityAmount = 1_000_000e6; // 1M MXNB
+        deal(MXNB, deployer, liquidityAmount);
+        _supplyMarketLiquidity(marketParams, liquidityAmount, deployer);
+        
+        // Step 4: Configure your vault/adapter to use this market
+        //_configureVaultForMarket(marketParams);
+        
+        // Step 5: Test vault operations
+        //testDepositAndBorrow();
+    }
+
+    function test_ExistingMarketIntegration() public {
+        // Step 1: Verify market exists
+        MarketParams memory marketParams = _getOrVerifyMarket(Id.wrap(MARKET_ID));
+        
+        // Step 2: Configure vault with existing market
+        bytes memory liquidityData = abi.encode(marketParams);
+        vault.submit(abi.encodeCall(vault.setLiquidityAdapterAndData, 
+            (adapter, liquidityData)));
+        vault.setLiquidityAdapterAndData(adapter, liquidityData);
+        
+        // Step 3: Ensure sufficient dead deposit exists
+        _supplyMarketLiquidity(marketParams, DEAD_DEPOSIT_AMOUNT, deployer);
+        
+        // Step 4: Test vault operations
+        _deployWithMarket();
+    }
+
+    function test_ExampleMarketCreation() public {
+        MarketCreationParams memory params = MarketCreationParams({
+            loanToken: MXNB,
+            collateralToken: USDC,
+            oracle: address(oracle),
+            irm: ADAPTIVE_CURVE_IRM,
+            lltv: 0.8e18  // 80% LLTV
+        });
+        
+        (MarketParams memory mktParams, Id marketId) = _createMarketFromScratch(params);
+        
+        console.log("Market created with ID:", vm.toString(Id.unwrap(marketId)));
+    }
+
+    function test_CreateNewMarketLocally() public {
+        // Get the Morpho owner (you'd need this for your local Morpho instance)
+        address morphoOwner = deployer; // Your Morpho owner address
+        
+        MarketCreationParams memory params = MarketCreationParams({
+            loanToken: MXNB,
+            collateralToken: USDC,
+            oracle: address(oracle),
+            irm: ADAPTIVE_CURVE_IRM,
+            lltv: 0.8e18  // 80% LLTV
+        });
+        
+        (MarketParams memory mktParams, Id marketId) = 
+            _createMarketWithOwner(params, morphoOwner);
+        
+        // Now use mktParams in your vault/adapter configuration
+        //_configureMarketWithParams(mktParams);
+    }
+
+    function test_VerifyMarketExists() public {
+        // Verify the standard test market exists
+        MarketParams memory marketParams = _getOrVerifyMarket(Id.wrap(MARKET_ID));
+        
+        assertEq(marketParams.loanToken, MXNB);
+        assertEq(marketParams.collateralToken, USDC);
+        assertEq(marketParams.irm, ADAPTIVE_CURVE_IRM);
+    }
+
+    function test_SupplyLiquidity() public {
+        MarketParams memory mktParams = _getOrVerifyMarket(Id.wrap(MARKET_ID));
+        
+        uint256 initialSupply = 100_000e6; // 100k MXNB
+        
+        // Ensure supplier has funds
+        deal(MXNB, deployer, initialSupply);
+        
+        _supplyMarketLiquidity(mktParams, initialSupply, deployer);
+        
+        // Now borrowers can borrow from this market
+    }
+
     function test_DeployWithoutMarket() public {
         _deployWithoutMarket();
 
-        assertEq(vault.asset(), USDC, "Asset should be USDC");
+        assertEq(vault.asset(), MXNB, "Asset should be MXNB");
         assertEq(vault.owner(), deployer, "Owner should be deployer");
         assertEq(vault.curator(), deployer, "Curator should be deployer");
 
@@ -506,10 +614,10 @@ contract DeployVaultAvaxTest is Test {
         assertGt(vault.balanceOf(address(0xdead)), 0, "Dead deposit made");
 
         // Verify funds stayed in vault (idle) since no liquidityAdapter
-        assertGe(IERC20(USDC).balanceOf(address(vault)), DEAD_DEPOSIT_AMOUNT, "Funds should stay idle in vault");
+        assertGe(IERC20(MXNB).balanceOf(address(vault)), DEAD_DEPOSIT_AMOUNT, "Funds should stay idle in vault");
 
         console.log("=== DEPLOYMENT WITHOUT MARKET VERIFIED ===");
-        console.log("VaultV2:", address(vault));
+        console.log("VaultV2 (MXNB asset):", address(vault));
         console.log("Adapter:", adapter);
         console.log("liquidityAdapter: NOT SET (deposits stay idle)");
     }
@@ -517,7 +625,7 @@ contract DeployVaultAvaxTest is Test {
     function test_DeployWithMarket() public {
         _deployWithMarket();
 
-        assertEq(vault.asset(), USDC, "Asset should be USDC");
+        assertEq(vault.asset(), MXNB, "Asset should be MXNB");
         assertEq(vault.owner(), deployer, "Owner should be deployer");
 
         assertEq(vault.adaptersLength(), 1, "Should have 1 adapter");
@@ -530,10 +638,10 @@ contract DeployVaultAvaxTest is Test {
         bytes memory liquidityData = vault.liquidityData();
         assertGt(liquidityData.length, 0, "liquidityData should not be empty");
 
-        // Decode and verify MarketParams
+        // Decode and verify MarketParams (MXNB/USDC market)
         MarketParams memory decodedParams = abi.decode(liquidityData, (MarketParams));
-        assertEq(decodedParams.loanToken, USDC, "Decoded loanToken should be USDC");
-        assertEq(decodedParams.collateralToken, CBBTC, "Decoded collateralToken should be cbBTC");
+        assertEq(decodedParams.loanToken, MXNB, "Decoded loanToken should be MXNB");
+        assertEq(decodedParams.collateralToken, USDC, "Decoded collateralToken should be USDC");
         assertEq(decodedParams.irm, ADAPTIVE_CURVE_IRM, "Decoded IRM should match");
 
         assertTrue(vault.abdicated(IVaultV2.setAdapterRegistry.selector), "setAdapterRegistry abdicated");
@@ -541,12 +649,12 @@ contract DeployVaultAvaxTest is Test {
         assertGt(vault.balanceOf(address(0xdead)), 0, "Dead deposit made");
 
         // Verify funds were allocated to market (not idle in vault)
-        assertLt(IERC20(USDC).balanceOf(address(vault)), DEAD_DEPOSIT_AMOUNT, "Funds should be allocated to market");
+        assertLt(IERC20(MXNB).balanceOf(address(vault)), DEAD_DEPOSIT_AMOUNT, "Funds should be allocated to market");
 
         console.log("=== DEPLOYMENT WITH MARKET VERIFIED ===");
-        console.log("VaultV2:", address(vault));
+        console.log("VaultV2 (MXNB asset):", address(vault));
         console.log("Adapter:", adapter);
-        console.log("liquidityAdapter: SET with encoded MarketParams");
+        console.log("liquidityAdapter: SET with MXNB/USDC market params");
     }
 
     function test_AdapterRegistryAbdicated() public {
@@ -583,17 +691,17 @@ contract DeployVaultAvaxTest is Test {
 
         address user = makeAddr("user");
         uint256 depositAmount = 1000e6;
-        deal(USDC, user, depositAmount);
+        deal(MXNB, user, depositAmount);
 
         vm.startPrank(user);
-        IERC20(USDC).approve(address(vault), depositAmount);
+        IERC20(MXNB).approve(address(vault), depositAmount);
         uint256 shares = vault.deposit(depositAmount, user);
         vm.stopPrank();
 
         assertGt(shares, 0, "Should receive shares");
 
         // Funds stay idle in vault
-        assertGe(IERC20(USDC).balanceOf(address(vault)), depositAmount, "Funds should stay in vault");
+        assertGe(IERC20(MXNB).balanceOf(address(vault)), depositAmount, "Funds should stay in vault");
 
         vm.startPrank(user);
         uint256 withdrawn = vault.redeem(shares, user, user);
@@ -610,17 +718,17 @@ contract DeployVaultAvaxTest is Test {
 
         address user = makeAddr("user");
         uint256 depositAmount = 1000e6;
-        deal(USDC, user, depositAmount);
+        deal(MXNB, user, depositAmount);
 
         vm.startPrank(user);
-        IERC20(USDC).approve(address(vault), depositAmount);
+        IERC20(MXNB).approve(address(vault), depositAmount);
         uint256 shares = vault.deposit(depositAmount, user);
         vm.stopPrank();
 
         assertGt(shares, 0, "Should receive shares");
 
         // Funds allocated to market (minimal in vault)
-        assertLt(IERC20(USDC).balanceOf(address(vault)), depositAmount, "Funds should be allocated to market");
+        assertLt(IERC20(MXNB).balanceOf(address(vault)), depositAmount, "Funds should be allocated to market");
 
         vm.startPrank(user);
         uint256 withdrawn = vault.redeem(shares, user, user);
@@ -644,8 +752,8 @@ contract DeployVaultAvaxTest is Test {
     function test_MarketCapsWithMarket() public {
         _deployWithMarket();
 
-        // Check collateral token cap
-        bytes32 collateralTokenId = keccak256(abi.encode("collateralToken", CBBTC));
+        // Check collateral token cap (USDC collateral)
+        bytes32 collateralTokenId = keccak256(abi.encode("collateralToken", USDC));
         assertEq(vault.absoluteCap(collateralTokenId), COLLATERAL_TOKEN_CAP, "Collateral token cap should be set");
         assertEq(vault.relativeCap(collateralTokenId), 1e18, "Collateral token relative cap should be 100%");
 
@@ -663,9 +771,9 @@ contract DeployVaultAvaxTest is Test {
     function test_EmptyLiquidityDataCausesRevert() public {
         vm.startPrank(deployer);
 
-        // Deploy VaultV2
+        // Deploy VaultV2 with MXNB as asset
         bytes32 salt = keccak256(abi.encodePacked(block.timestamp, gasleft()));
-        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, USDC, salt));
+        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, MXNB, salt));
         vault.setCurator(deployer);
 
         // Deploy adapter
@@ -691,7 +799,7 @@ contract DeployVaultAvaxTest is Test {
         vault.setLiquidityAdapterAndData(adapter, bytes(""));
 
         // Try to deposit - should revert because allocate tries to decode empty bytes as MarketParams
-        IERC20(USDC).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
+        IERC20(MXNB).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
         vm.expectRevert(); // abi.decode of empty bytes will fail
         vault.deposit(DEAD_DEPOSIT_AMOUNT, address(0xdead));
 
@@ -709,9 +817,9 @@ contract DeployVaultAvaxTest is Test {
 
         vm.startPrank(deployer);
 
-        // Deploy VaultV2
+        // Deploy VaultV2 with MXNB as asset
         bytes32 salt = keccak256(abi.encodePacked(block.timestamp, gasleft()));
-        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, USDC, salt));
+        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, MXNB, salt));
         vault.setCurator(deployer);
 
         // Deploy adapter
@@ -779,9 +887,9 @@ contract DeployVaultAvaxTest is Test {
 
         vm.startPrank(deployer);
 
-        // Deploy VaultV2
+        // Deploy VaultV2 with MXNB as asset
         bytes32 salt = keccak256(abi.encodePacked(block.timestamp, gasleft()));
-        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, USDC, salt));
+        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, MXNB, salt));
         vault.setCurator(deployer);
 
         // Deploy adapter
@@ -837,9 +945,9 @@ contract DeployVaultAvaxTest is Test {
 
         vm.startPrank(deployer);
 
-        // Phase 1: Deploy VaultV2
+        // Phase 1: Deploy VaultV2 with MXNB as asset
         bytes32 salt = keccak256(abi.encodePacked(block.timestamp, gasleft()));
-        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, USDC, salt));
+        vault = VaultV2(VaultV2Factory(VAULT_V2_FACTORY).createVaultV2(deployer, MXNB, salt));
 
         // Phase 2: Set temporary curator
         vault.setCurator(deployer);
@@ -871,7 +979,7 @@ contract DeployVaultAvaxTest is Test {
         vault.abdicate(IVaultV2.setReceiveAssetsGate.selector);
 
         // Phase 8: Dead deposit (no market so deposits stay idle)
-        IERC20(USDC).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
+        IERC20(MXNB).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
         vault.deposit(DEAD_DEPOSIT_AMOUNT, address(0xdead));
 
         // Phase 9: Configure vault timelocks
