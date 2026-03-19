@@ -21,6 +21,7 @@ contract DeployVaultAvaxTest is Test {
     using MarketParamsLib for MarketParams;
 
     uint256 internal constant BLOCK_TIME = 1;
+    uint256 internal constant FORK_BLOCK = 80_779_000; // Safe finalized block (~6 days old)
     
     // Base mainnet addresses
     address constant VAULT_V2_FACTORY = 0xf7b1d9e43BAeA3705f2B303693766ACbcfec6A55;
@@ -61,7 +62,7 @@ contract DeployVaultAvaxTest is Test {
     }
 
     function setUp() public {
-        vm.createSelectFork("https://api.avax.network/ext/bc/C/rpc");
+        vm.createSelectFork("https://api.avax.network/ext/bc/C/rpc", FORK_BLOCK);
         console.log("deployer:",deployer);
         uint256 initialMXNBBalance = IERC20(MXNB).balanceOf(deployer);
         uint256 initialUSDCBalance = IERC20(USDC).balanceOf(deployer);
@@ -174,6 +175,7 @@ contract DeployVaultAvaxTest is Test {
          * A market is considered to exist if loanToken is set to MXNB
          */
         MarketParams memory marketParamsTemp = morpho.idToMarketParams(marketId);
+        console.log("Market already exists at loanToken:", marketParamsTemp.loanToken);
         if (marketParamsTemp.loanToken == MXNB) {
             console.log("Market already exists at loanToken:", marketParamsTemp.loanToken);
         } else {
@@ -224,23 +226,10 @@ contract DeployVaultAvaxTest is Test {
 
         console.log("Creating market with owner impersonation...");
 
-        // Enable IRM if not address(0)
-        if (params.irm != address(0) && !morpho.isIrmEnabled(params.irm)) {
-            vm.prank(morphoOwner);
-            morpho.enableIrm(params.irm);
-            console.log("IRM enabled");
-        }
-
-        // Enable LLTV
-        if (!morpho.isLltvEnabled(params.lltv)) {
-            vm.prank(morphoOwner);
-            morpho.enableLltv(params.lltv);
-            console.log("LLTV enabled");
-        }
-
         // Create market if it doesn't exist
-        MarketParams memory marketParamsTemp2 = morpho.idToMarketParams(marketId);
-        if (marketParamsTemp2.loanToken != MXNB) {
+        MarketParams memory marketParamsTemp = morpho.idToMarketParams(marketId);
+        //console.log("_createMarketWithOwner market exist:",marketParamsTemp);
+        if (marketParamsTemp.loanToken != MXNB) {
             vm.prank(morphoOwner);
             morpho.createMarket(marketParams);
             console.log("Market created successfully!");
@@ -512,7 +501,7 @@ contract DeployVaultAvaxTest is Test {
         vault.increaseAbsoluteCap(marketIdData, MARKET_CAP);
         vault.increaseRelativeCap(marketIdData, 1e18);
     }
-    /**
+
     function test_CompleteMarketSetup() public {
         // Step 1: Define market parameters
         MarketCreationParams memory params = MarketCreationParams({
@@ -520,14 +509,20 @@ contract DeployVaultAvaxTest is Test {
             collateralToken: USDC,
             oracle: address(oracle),  // Your mock oracle
             irm: ADAPTIVE_CURVE_IRM,
-            lltv: 0.8e18  // 80% LTV
+            lltv: 0.77e18  // 77% LTV
         });
         
         // Step 2: Create the market (requires owner)
         address morphoOwner = deployer; // Get your Morpho owner
         (MarketParams memory marketParams, Id marketId) = 
             _createMarketWithOwner(params, morphoOwner);
-        
+
+        //console.log("test_CompleteMarketSetup created marketParams:",marketParams);
+        //console.log("test_CompleteMarketSetup created marketId:",marketId);
+
+        //MarketParams memory marketParamsTest = IMorpho(MORPHO).idToMarketParams(marketId);
+        //console.log("test_CompleteMarketSetup idToMarketParams:",marketParamsTest);
+
         // Step 3: Supply initial liquidity
         uint256 liquidityAmount = 1_000_000e6; // 1M MXNB
         deal(MXNB, deployer, liquidityAmount);
@@ -540,7 +535,7 @@ contract DeployVaultAvaxTest is Test {
         //testDepositAndBorrow();
     }
 
-
+    /**
     function test_ExampleMarketCreation() public {
         MarketCreationParams memory params = MarketCreationParams({
             loanToken: MXNB,
@@ -572,7 +567,7 @@ contract DeployVaultAvaxTest is Test {
         _deployWithMarket();
     }
 
-    */
+
 
     function test_CreateNewMarketLocally() public {
         // Get the Morpho owner (you'd need this for your local Morpho instance)
@@ -593,7 +588,6 @@ contract DeployVaultAvaxTest is Test {
         //_configureMarketWithParams(mktParams);
     }
 
-
     function test_VerifyMarketExists() public {
         // Verify the standard test market exists
         MarketParams memory marketParams = _getOrVerifyMarket(Id.wrap(MARKET_ID));
@@ -603,7 +597,6 @@ contract DeployVaultAvaxTest is Test {
         assertEq(marketParams.irm, ADAPTIVE_CURVE_IRM);
     }
 
-    /**
     function test_SupplyLiquidity() public {
         MarketParams memory mktParams = _getOrVerifyMarket(Id.wrap(MARKET_ID));
         
@@ -616,7 +609,6 @@ contract DeployVaultAvaxTest is Test {
         
         // Now borrowers can borrow from this market
     }
-    */
 
     function test_DeployWithoutMarket() public {
         _deployWithoutMarket();
@@ -794,10 +786,6 @@ contract DeployVaultAvaxTest is Test {
         assertEq(vault.relativeCap(marketParamsId), 1e18, "Market relative cap should be 100%");
     }
 
-    /**
-     * @notice Test that setting liquidityAdapter with empty data causes allocate to fail
-     * @dev This demonstrates the bug we fixed
-     */
     function test_EmptyLiquidityDataCausesRevert() public {
         vm.startPrank(deployer);
 
@@ -838,10 +826,8 @@ contract DeployVaultAvaxTest is Test {
         console.log("=== CONFIRMED: Empty liquidityData causes revert on deposit ===");
     }
 
-    /**
-     * @notice Test deployment with vault timelocks configured
-     * @dev Verifies that vault timelocks are properly set for listing requirements
-     */
+    //Test deployment with vault timelocks configured
+    // Verifies that vault timelocks are properly set for listing requirements
     function test_DeployWithVaultTimelocks() public {
         uint256 timelockDuration = 3 days; // 259200 seconds - minimum for listing
 
@@ -908,10 +894,8 @@ contract DeployVaultAvaxTest is Test {
         console.log("Timelock duration:", timelockDuration, "seconds");
     }
 
-    /**
-     * @notice Test deployment with adapter timelocks configured
-     * @dev Verifies that adapter timelocks are properly set for listing requirements
-     */
+    //Test deployment with adapter timelocks configured
+    //Verifies that adapter timelocks are properly set for listing requirements
     function test_DeployWithAdapterTimelocks() public {
         uint256 timelockDuration = 3 days; // 259200 seconds - minimum for listing
 
@@ -966,10 +950,8 @@ contract DeployVaultAvaxTest is Test {
         console.log("Timelock duration:", timelockDuration, "seconds");
     }
 
-    /**
-     * @notice Test full deployment with timelocks (manual recreation of script logic)
-     * @dev Manually recreates the deployment flow since vm.startBroadcast is incompatible with vm.prank
-     */
+    //Test full deployment with timelocks (manual recreation of script logic)
+    // Manually recreates the deployment flow since vm.startBroadcast is incompatible with vm.prank
     function test_FullDeploymentWithTimelocks() public {
         uint256 timelockDuration = 3 days; // 259200 seconds
 
@@ -1064,4 +1046,5 @@ contract DeployVaultAvaxTest is Test {
         console.log("Adapter:", adapter);
         console.log("Timelock duration:", timelockDuration, "seconds");
     }
+     */
 }

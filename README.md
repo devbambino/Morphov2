@@ -1,40 +1,40 @@
 # Morpho VaultV2 Deployment with MorphoMarketV1AdapterV2
-
 ---
 
-## ⚠️ IMPORTANT DISCLAIMER ⚠️
+## Installation
 
+```bash
+# Install foundryup
+curl -L https://foundry.paradigm.xyz | bash
+
+# Restart your terminal
+source ~/.bashrc
+source ~/.zshrc.
+
+#Install Foundry
+foundryup
 ```
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                                                                              ║
-║   🚨 THIS REPOSITORY IS FOR DEMONSTRATION AND EDUCATIONAL PURPOSES ONLY 🚨   ║
-║                                                                              ║
-║   DO NOT USE IN PRODUCTION WITHOUT THOROUGH REVIEW AND TESTING              ║
-║                                                                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
+
+## Running Tests
+
+```bash
+# Run all tests on Avax mainnet fork
+forge test --fork-url https://api.avax.network/ext/bc/C/rpc
+
+# Run Market Adapter tests with verbose output
+forge test --match-path test/DeployVaultAvax.t.sol -vvv
+
+# Run Market Adapter tests with verbose output
+forge test --match-path test/DeployVaultV2WithMarketAdapter.t.sol -vvv
+
+# Run specific test
+forge test --match-test test_CompleteMarketSetup -vvv
+
+# Run all tests (requires fork URL)
+source .env && forge test --fork-url "$RPC_URL" -vvv
 ```
 
-### Risk Warning
-
-**The Morpho Association and contributors cannot be held responsible for ANY loss of funds, damages, or other consequences that may result from using this script or any associated code.**
-
-**By using this repository, you explicitly acknowledge and accept that:**
-
-1. **NO WARRANTY**: This code is provided "AS IS" without any warranties, guarantees, or representations of any kind, express or implied
-2. **EDUCATIONAL ONLY**: This repository exists solely for educational and demonstration purposes to illustrate VaultV2 deployment concepts
-3. **YOUR RESPONSIBILITY**: You are solely and entirely responsible for:
-   - Understanding every line of code before deployment
-   - Testing extensively on testnets before any mainnet interaction
-   - Any funds, assets, or value that may be lost due to bugs, errors, vulnerabilities, or misuse
-   - Ensuring compliance with all applicable laws and regulations
-4. **SECURITY RISKS**: Smart contract deployment involves significant financial risk including but not limited to:
-   - Complete loss of deposited funds
-   - Vulnerability exploitation
-   - Transaction failures
-   - Gas cost overruns
-5. **NOT AUDITED**: This code has NOT been professionally audited and may contain critical vulnerabilities
-6. **NO SUPPORT**: No support, maintenance, or updates are guaranteed
-
+---
 ### Before Using This Code
 
 - [ ] Read and understand EVERY line of the deployment script
@@ -240,42 +240,6 @@ MARKET_CAP=1000000000000
 VAULT_TIMELOCK_DURATION=259200
 ADAPTER_TIMELOCK_DURATION=259200
 ```
-
----
-
-## Installation
-
-```bash
-# Install foundryup
-curl -L https://foundry.paradigm.xyz | bash
-
-# Restart your terminal
-source ~/.bashrc
-source ~/.zshrc.
-
-#Install Foundry
-foundryup
-```
-
-## Running Tests
-
-```bash
-# Run all tests on Avax mainnet fork
-forge test --fork-url https://api.avax.network/ext/bc/C/rpc
-
-# Run Market Adapter tests with verbose output
-forge test --match-path test/DeployVaultAvax.t.sol -vvv
-
-# Run Market Adapter tests with verbose output
-forge test --match-path test/DeployVaultV2WithMarketAdapter.t.sol -vvv
-
-# Run specific test
-forge test --match-test test_FullDeploymentWithTimelocks -vvv
-
-# Run all tests (requires fork URL)
-source .env && forge test --fork-url "$RPC_URL" -vvv
-```
-
 ---
 
 ## Production Deployment
