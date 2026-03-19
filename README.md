@@ -243,6 +243,20 @@ ADAPTER_TIMELOCK_DURATION=259200
 
 ---
 
+## Installation
+
+```bash
+# Install foundryup
+curl -L https://foundry.paradigm.xyz | bash
+
+# Restart your terminal
+source ~/.bashrc
+source ~/.zshrc.
+
+#Install Foundry
+foundryup
+```
+
 ## Running Tests
 
 ```bash
@@ -250,7 +264,7 @@ ADAPTER_TIMELOCK_DURATION=259200
 forge test --fork-url https://api.avax.network/ext/bc/C/rpc
 
 # Run Market Adapter tests with verbose output
-forge test --match-path test/DeployVaultAvaxTest.t.sol -vvv
+forge test --match-path test/DeployVaultAvax.t.sol -vvv
 
 # Run Market Adapter tests with verbose output
 forge test --match-path test/DeployVaultV2WithMarketAdapter.t.sol -vvv

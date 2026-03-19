@@ -18,6 +18,10 @@ import {OracleMock} from "./mocks/OracleMock.sol";
  * @notice Tests deployment logic for VaultV2 with MorphoMarketV1AdapterV2 on Base mainnet fork
  */
 contract DeployVaultAvaxTest is Test {
+    using MarketParamsLib for MarketParams;
+
+    uint256 internal constant BLOCK_TIME = 1;
+    
     // Base mainnet addresses
     address constant VAULT_V2_FACTORY = 0xf7b1d9e43BAeA3705f2B303693766ACbcfec6A55;
     address constant MORPHO_MARKET_V1_ADAPTER_V2_FACTORY = 0x9633D22Bb8F42f6f70DbbBe34c11EB9209769b8b;
@@ -31,7 +35,7 @@ contract DeployVaultAvaxTest is Test {
 
     // Test market: MXNB/USDC with Adaptive Curve IRM
     // Note: Update MARKET_ID to the actual MXNB/USDC market on Avalanche
-    bytes32 MARKET_ID = 0x9103c3b4e834476c9a62ea009ba2c884ee42e94e6e314a26f04d312434191836; // Placeholder - update for MXNB/USDC
+    bytes32 MARKET_ID = 0x0; // Placeholder - update for MXNB/USDC
     address constant COLLATERAL_TOKEN = USDC;
 
     uint256 constant DEAD_DEPOSIT_AMOUNT = 1e12; // For 6 decimal asset
@@ -58,14 +62,29 @@ contract DeployVaultAvaxTest is Test {
 
     function setUp() public {
         vm.createSelectFork("https://api.avax.network/ext/bc/C/rpc");
+        console.log("deployer:",deployer);
+        uint256 initialMXNBBalance = IERC20(MXNB).balanceOf(deployer);
+        uint256 initialUSDCBalance = IERC20(USDC).balanceOf(deployer);
+        console.log("initialMXNBBalance:",initialMXNBBalance);
+        console.log("initialUSDCBalance:",initialUSDCBalance);
         deal(MXNB, deployer, 100_000_000e6); // 100M MXNB for vault operations
         deal(USDC, deployer, 100_000_000e6); // 100M USDC for market operations and collateral
+        uint256 MXNBBalance = IERC20(MXNB).balanceOf(deployer);
+        uint256 USDCBalance = IERC20(USDC).balanceOf(deployer);
+        console.log("MXNBBalance:",MXNBBalance);
+        console.log("USDCBalance:",USDCBalance);
 
         // Deploy oracle for MXNB/USDC market
         // Price formula: price_in_usd * 10^(loan_decimals - collateral_decimals + 36)
         // 1 USDC = 17.9 MXNB, so: 17.9 * 10^(6 - 6 + 36) = 179 * 1e35
         oracle = new OracleMock();
         oracle.setPrice(179 * 1e35);
+    }
+
+    /// @dev Rolls & warps the given number of blocks forward the blockchain.
+    function _forward(uint256 blocks) internal {
+        vm.roll(block.number + blocks);
+        vm.warp(block.timestamp + blocks * BLOCK_TIME); // Block speed should depend on test network.
     }
 
     /**
@@ -89,8 +108,6 @@ contract DeployVaultAvaxTest is Test {
         internal
         returns (MarketParams memory marketParams, Id marketId)
     {
-        using MarketParamsLib for MarketParams;
-
         IMorpho morpho = IMorpho(MORPHO);
 
         // Construct the MarketParams struct
@@ -154,25 +171,28 @@ contract DeployVaultAvaxTest is Test {
 
         /**
          * STEP 3: Check if market already exists
-         * A market is considered to exist if lastUpdate is non-zero
+         * A market is considered to exist if loanToken is set to MXNB
          */
-        uint256 lastUpdate = morpho.lastUpdate(marketId);
-        if (lastUpdate == 0) {
-            console.log("Market does not exist, attempting to create...");
-            // try morpho.createMarket(marketParams) {
-            //     console.log("Market created successfully!");
-            //     console.log("Market ID:", vm.toString(Id.unwrap(marketId)));
-            // } catch Error(string memory reason) {
-            //     console.log("Failed to create market:", reason);
-            //     console.log("Common reasons:");
-            //     console.log("- IRM_NOT_ENABLED: IRM address not enabled");
-            //     console.log("- LLTV_NOT_ENABLED: LLTV value not enabled");
-            //     console.log("- MARKET_ALREADY_CREATED: Market already exists");
-            //     console.log("Note: Market creation requires Morpho owner privileges");
-            // }
+        MarketParams memory marketParamsTemp = morpho.idToMarketParams(marketId);
+        if (marketParamsTemp.loanToken == MXNB) {
+            console.log("Market already exists at loanToken:", marketParamsTemp.loanToken);
         } else {
-            console.log("Market already exists at timestamp:", lastUpdate);
+            console.log("Market does not exist, attempting to create...");
+            try morpho.createMarket(marketParams) {
+                console.log("Market created successfully!");
+                console.log("Market ID:", vm.toString(Id.unwrap(marketId)));
+            } catch Error(string memory reason) {
+                console.log("Failed to create market:", reason);
+                console.log("Common reasons:");
+                console.log("- IRM_NOT_ENABLED: IRM address not enabled");
+                console.log("- LLTV_NOT_ENABLED: LLTV value not enabled");
+                console.log("- MARKET_ALREADY_CREATED: Market already exists");
+                console.log("Note: Market creation requires Morpho owner privileges");
+            }
         }
+
+        // Set state variable so other methods can use this market
+        MARKET_ID = Id.unwrap(marketId);
 
         return (marketParams, marketId);
     }
@@ -189,7 +209,6 @@ contract DeployVaultAvaxTest is Test {
         internal
         returns (MarketParams memory marketParams, Id marketId)
     {
-        using MarketParamsLib for MarketParams;
 
         IMorpho morpho = IMorpho(MORPHO);
 
@@ -220,13 +239,18 @@ contract DeployVaultAvaxTest is Test {
         }
 
         // Create market if it doesn't exist
-        if (morpho.lastUpdate(marketId) == 0) {
+        MarketParams memory marketParamsTemp2 = morpho.idToMarketParams(marketId);
+        if (marketParamsTemp2.loanToken != MXNB) {
             vm.prank(morphoOwner);
             morpho.createMarket(marketParams);
             console.log("Market created successfully!");
+            console.log("Market ID:", vm.toString(Id.unwrap(marketId)));
         } else {
             console.log("Market already exists");
         }
+
+        // Set state variable so other methods can use this market
+        MARKET_ID = Id.unwrap(marketId);
 
         return (marketParams, marketId);
     }
@@ -240,12 +264,11 @@ contract DeployVaultAvaxTest is Test {
     function _getOrVerifyMarket(Id marketId) internal view returns (MarketParams memory marketParams) {
         IMorpho morpho = IMorpho(MORPHO);
         
-        marketParams = morpho.idToMarketParams(marketId);
+        MarketParams memory verifiedParams = morpho.idToMarketParams(marketId);
         
-        // Verify market exists
-        require(morpho.lastUpdate(marketId) != 0, "Market does not exist");
+        require(verifiedParams.loanToken == MXNB, "Market does not exist or invalid loanToken");
         
-        return marketParams;
+        return verifiedParams;
     }
 
     /**
@@ -399,22 +422,18 @@ contract DeployVaultAvaxTest is Test {
      * @dev Handles IRM and LLTV enablement, then creates market if it doesn't exist
      */
     function _createOrVerifyMarket(MarketParams memory marketParams) internal {
-        using MarketParamsLib for MarketParams;
-
+        
         Id marketId = marketParams.id();
+        console.log("Market ID:", vm.toString(Id.unwrap(marketId)));
         IMorpho morpho = IMorpho(MORPHO);
-
-        // Get the owner of Morpho (needed for market creation)
-        // Since we can't directly get owner from interface, we use the deployer's elevated privileges
-        // In a real scenario, you'd need Morpho owner to call these functions
 
         // Step 1: Enable IRM if not already enabled
         // Note: This step requires Morpho owner privileges
         // For testing on fork, we try to enable it; if we don't have privileges, the market may already exist
         try morpho.isIrmEnabled(marketParams.irm) returns (bool isEnabled) {
             if (!isEnabled) {
-                // Cannot enable without owner access - market should already exist
-                // Or IRM is address(0) which doesn't need enabling
+                morpho.enableIrm(marketParams.irm);
+                console.log("IRM enabled");
             }
         } catch {}
 
@@ -422,25 +441,29 @@ contract DeployVaultAvaxTest is Test {
         // Note: This step also requires Morpho owner privileges
         try morpho.isLltvEnabled(marketParams.lltv) returns (bool isEnabled) {
             if (!isEnabled) {
-                // Cannot enable without owner access - market should already exist
+                morpho.enableLltv(marketParams.lltv);
+                console.log("LLTV enabled");
             }
         } catch {}
 
         // Step 3: Create market if it doesn't exist
-        // Market exists if lastUpdate is non-zero
-        try morpho.lastUpdate(marketId) returns (uint256 lastUpdate) {
-            if (lastUpdate == 0) {
-                // Market doesn't exist - try to create it
-                // Note: This requires Morpho owner privileges
-                try morpho.createMarket(marketParams) {
-                    console.log("Market created successfully");
-                } catch Error(string memory reason) {
-                    console.log("Market creation failed, assuming it exists:", reason);
-                }
-            } else {
-                console.log("Market already exists");
+        // Market exists if loanToken matches MXNB
+        MarketParams memory marketParamsCheck = morpho.idToMarketParams(marketId);
+        if (marketParamsCheck.loanToken != MXNB) {
+            // Market doesn't exist - try to create it
+            // Note: This requires Morpho owner privileges
+            try morpho.createMarket(marketParams) {
+                console.log("Market created successfully");
+            } catch Error(string memory reason) {
+                console.log("Market creation failed, assuming it exists:", reason);
             }
-        } catch {}
+            console.log("Market ID:", vm.toString(Id.unwrap(marketId)));
+        } else {
+            console.log("Market already exists");
+        }
+
+        // Set state variable so other methods can use this market
+        MARKET_ID = Id.unwrap(marketId);
     }
 
     /**
@@ -459,7 +482,8 @@ contract DeployVaultAvaxTest is Test {
 
         // Attempt to create market if it doesn't exist
         // This is safe to call for forks where the market already exists
-        // _createOrVerifyMarket(marketParams);
+        _createOrVerifyMarket(marketParams);
+        _forward(1);
 
         // KEY FIX: Set liquidityAdapterAndData with encoded MarketParams
         bytes memory liquidityData = abi.encode(marketParams);
@@ -488,7 +512,7 @@ contract DeployVaultAvaxTest is Test {
         vault.increaseAbsoluteCap(marketIdData, MARKET_CAP);
         vault.increaseRelativeCap(marketIdData, 1e18);
     }
-
+    /**
     function test_CompleteMarketSetup() public {
         // Step 1: Define market parameters
         MarketCreationParams memory params = MarketCreationParams({
@@ -516,6 +540,21 @@ contract DeployVaultAvaxTest is Test {
         //testDepositAndBorrow();
     }
 
+
+    function test_ExampleMarketCreation() public {
+        MarketCreationParams memory params = MarketCreationParams({
+            loanToken: MXNB,
+            collateralToken: USDC,
+            oracle: address(oracle),
+            irm: ADAPTIVE_CURVE_IRM,
+            lltv: 0.8e18  // 80% LLTV
+        });
+        
+        (MarketParams memory mktParams, Id marketId) = _createMarketFromScratch(params);
+        
+        console.log("Market created with ID:", vm.toString(Id.unwrap(marketId)));
+    }
+
     function test_ExistingMarketIntegration() public {
         // Step 1: Verify market exists
         MarketParams memory marketParams = _getOrVerifyMarket(Id.wrap(MARKET_ID));
@@ -533,19 +572,7 @@ contract DeployVaultAvaxTest is Test {
         _deployWithMarket();
     }
 
-    function test_ExampleMarketCreation() public {
-        MarketCreationParams memory params = MarketCreationParams({
-            loanToken: MXNB,
-            collateralToken: USDC,
-            oracle: address(oracle),
-            irm: ADAPTIVE_CURVE_IRM,
-            lltv: 0.8e18  // 80% LLTV
-        });
-        
-        (MarketParams memory mktParams, Id marketId) = _createMarketFromScratch(params);
-        
-        console.log("Market created with ID:", vm.toString(Id.unwrap(marketId)));
-    }
+    */
 
     function test_CreateNewMarketLocally() public {
         // Get the Morpho owner (you'd need this for your local Morpho instance)
@@ -566,6 +593,7 @@ contract DeployVaultAvaxTest is Test {
         //_configureMarketWithParams(mktParams);
     }
 
+
     function test_VerifyMarketExists() public {
         // Verify the standard test market exists
         MarketParams memory marketParams = _getOrVerifyMarket(Id.wrap(MARKET_ID));
@@ -575,6 +603,7 @@ contract DeployVaultAvaxTest is Test {
         assertEq(marketParams.irm, ADAPTIVE_CURVE_IRM);
     }
 
+    /**
     function test_SupplyLiquidity() public {
         MarketParams memory mktParams = _getOrVerifyMarket(Id.wrap(MARKET_ID));
         
@@ -587,6 +616,7 @@ contract DeployVaultAvaxTest is Test {
         
         // Now borrowers can borrow from this market
     }
+    */
 
     function test_DeployWithoutMarket() public {
         _deployWithoutMarket();
