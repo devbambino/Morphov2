@@ -8,7 +8,7 @@ import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IMorphoMarketV1AdapterV2} from "vault-v2/adapters/interfaces/IMorphoMarketV1AdapterV2.sol";
 import {IMorphoMarketV1AdapterV2Factory} from "vault-v2/adapters/interfaces/IMorphoMarketV1AdapterV2Factory.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
-import {IMorpho, MarketParams, Id, Position} from "morpho-blue/src/interfaces/IMorpho.sol";
+import {IMorpho, MarketParams, Id, Position, Market} from "morpho-blue/src/interfaces/IMorpho.sol";
 import {DeployVaultV2WithMarketAdapter} from "../script/DeployVaultV2WithMarketAdapter.s.sol";
 import {MarketParamsLib} from "morpho-blue/src/libraries/MarketParamsLib.sol";
 import {OracleMock} from "./mocks/OracleMock.sol";
@@ -364,8 +364,8 @@ contract DeployVaultAvaxTest is Test {
         _configureMarketAndLiquidityAdapter();
 
         // Dead deposit (allocates to market via liquidityAdapter)
-        IERC20(MXNB).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
-        vault.deposit(DEAD_DEPOSIT_AMOUNT, address(0xdead));
+        //IERC20(MXNB).approve(address(vault), DEAD_DEPOSIT_AMOUNT);
+        //vault.deposit(DEAD_DEPOSIT_AMOUNT, address(0xdead));
 
         vm.stopPrank();
     }
@@ -727,23 +727,38 @@ contract DeployVaultAvaxTest is Test {
     function test_DepositBorrowRepayWithMarket() public {
         _deployWithMarket();
 
+        IMorpho morpho = IMorpho(MORPHO);
+        /**
+        MarketParams memory marketParams = MarketParams({
+            loanToken: MXNB,
+            collateralToken: USDC,
+            oracle: address(oracle),  // Your mock oracle
+            irm: ADAPTIVE_CURVE_IRM,
+            lltv: 0.77e18  // 77% LTV
+        });
+        */
+        MarketParams memory marketParams = morpho.idToMarketParams(Id.wrap(MARKET_ID));
+        //_createOrVerifyMarket
         console.log("initial vault balance:",IERC20(MXNB).balanceOf(address(vault)));
 
         address lender = makeAddr("lender");
-        uint256 depositAmount = 1790e6; // 1790 MXNB = 100 USDC
-        deal(MXNB, lender, depositAmount * 2);
+        uint256 depositAmount = 3580e6; // 3580 MXNB = 200 USDC
+        deal(MXNB, lender, depositAmount);
 
         address borrower = makeAddr("borrower");
         uint256 collateralAmount = 200e6; // 100 USDC = 1790 MXNB but 200 supply for 50% LTV
-        deal(MXNB, borrower, collateralAmount);
+        deal(USDC, borrower, collateralAmount);
 
         console.log("beforeDeposit lender balance:",IERC20(MXNB).balanceOf(lender));
         console.log("beforeDeposit borrower MXN balance:",IERC20(MXNB).balanceOf(borrower));
         console.log("beforeDeposit borrower USD balance:",IERC20(USDC).balanceOf(borrower));
+        Market memory market = morpho.market(Id.wrap(MARKET_ID));
+        console.log("beforeDeposit totalSupplyAssets:",market.totalSupplyAssets, " totalBorrowAssets:", market.totalBorrowAssets);
 
+        // Lending
         vm.startPrank(lender);
-        IERC20(MXNB).approve(address(vault), depositAmount * 2);
-        uint256 shares = vault.deposit(depositAmount * 2, lender);
+        IERC20(MXNB).approve(address(vault), depositAmount);
+        uint256 shares = vault.deposit(depositAmount, lender);
         vm.stopPrank();
 
         assertGt(shares, 0, "Should receive shares");
@@ -751,17 +766,66 @@ contract DeployVaultAvaxTest is Test {
         // Funds allocated to market (minimal in vault)
         assertLt(IERC20(MXNB).balanceOf(address(vault)), depositAmount, "Funds should be allocated to market");
         console.log("afterDeposit vault balance:",IERC20(MXNB).balanceOf(address(vault)));
-        console.log("afterDeposit lender balance:",IERC20(MXNB).balanceOf(lender));
+        console.log("afterDeposit lender MXN balance:",IERC20(MXNB).balanceOf(lender));
+        console.log("afterDeposit lender vMXN balance:",IERC20(address(vault)).balanceOf(lender), " shares:", shares);
+        market = morpho.market(Id.wrap(MARKET_ID));
+        console.log("afterDeposit totalSupplyAssets:",market.totalSupplyAssets, " totalBorrowAssets: ", market.totalBorrowAssets);
 
-        // Borrow Flow
+        // Supply collateral & Borrow
+        uint256 borrowedAmount = 1790e6; // 100 USDC = 1790 MXNB but 200 supply for 50% LTV
         vm.startPrank(borrower);
-        IERC20(MXNB).approve(address(vault), collateralAmount);
-        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
-        morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, RECEIVER);
+        IERC20(USDC).approve(address(morpho), collateralAmount);
+        morpho.supplyCollateral(marketParams, collateralAmount, borrower, hex"");
+        _forward(1);
+        (uint256 borrowedAssets, uint256 borrowedShares) = morpho.borrow(marketParams, borrowedAmount, 0, borrower, borrower);
+        _forward(1);
+        Position memory position = morpho.position(Id.wrap(MARKET_ID), borrower);
         vm.stopPrank();
 
-        assertGt(shares, 0, "Should receive shares");
-        
+        console.log("afterBorrow vault balance:",IERC20(MXNB).balanceOf(address(vault)));
+        console.log("afterBorrow borrower MXN balance:",IERC20(MXNB).balanceOf(borrower));
+        console.log("afterBorrow borrower USD balance:",IERC20(USDC).balanceOf(borrower));
+        console.log("afterBorrow borrower borrowedAssets:",borrowedAssets, " borrowedShares:", borrowedShares);
+        //console.log("afterBorrow borrower supplyShares:", position.supplyShares, " borrowShares:",position.borrowShares," collateral:",position.collateral);
+        market = morpho.market(Id.wrap(MARKET_ID));
+        console.log("afterBorrow totalSupplyAssets:",market.totalSupplyAssets, " totalBorrowAssets: ", market.totalBorrowAssets);
+
+        assertEq(borrowedAssets, borrowedAmount, "returned asset amount");
+        assertEq(IERC20(MXNB).balanceOf(borrower), borrowedAmount, "borrower balance");
+        //assertEq(IERC20(MXNB).balanceOf(address(vault)), depositAmount - borrowedAmount, "morpho balance");
+
+        // Repay
+        uint256 interestAmount = 1e6;
+        deal(MXNB, borrower, IERC20(MXNB).balanceOf(borrower) + interestAmount);
+        console.log("beforeRepay borrower MXN balance:",IERC20(MXNB).balanceOf(borrower));
+        vm.startPrank(borrower);
+        IERC20(MXNB).approve(address(morpho),IERC20(MXNB).balanceOf(borrower));
+        (uint256 repaidAssets, uint256 repaidShares) = morpho.repay(marketParams, 0, position.borrowShares, borrower, hex"");
+        _forward(1);
+        position = morpho.position(Id.wrap(MARKET_ID), borrower);
+        vm.stopPrank();
+
+        console.log("afterRepay vault balance:",IERC20(MXNB).balanceOf(address(vault)));
+        console.log("afterRepay borrower MXN balance:",IERC20(MXNB).balanceOf(borrower));
+        console.log("afterRepay borrower USD balance:",IERC20(USDC).balanceOf(borrower));
+        console.log("afterRepay borrower repaidAssets:",repaidAssets, " repaidShares:", repaidShares);
+        //console.log("afterRepay borrower supplyShares:", position.supplyShares, " borrowShares:",position.borrowShares," collateral:",position.collateral);
+        market = morpho.market(Id.wrap(MARKET_ID));
+        console.log("afterRepay totalSupplyAssets:",market.totalSupplyAssets, " totalBorrowAssets: ", market.totalBorrowAssets);
+
+        // Withdraw Collateral
+        vm.startPrank(borrower);
+        morpho.withdrawCollateral(marketParams, position.collateral, borrower, borrower);
+        _forward(1);
+        position = morpho.position(Id.wrap(MARKET_ID), borrower);
+        vm.stopPrank();
+
+        console.log("afterWithdColl borrower MXN balance:",IERC20(MXNB).balanceOf(borrower));
+        console.log("afterWithdColl borrower USD balance:",IERC20(USDC).balanceOf(borrower));
+        //console.log("afterWithdColl borrower supplyShares:", position.supplyShares, " borrowShares:",position.borrowShares," collateral:",position.collateral);
+        market = morpho.market(Id.wrap(MARKET_ID));
+        console.log("afterWithdColl totalSupplyAssets:",market.totalSupplyAssets, " totalBorrowAssets: ", market.totalBorrowAssets);
+
         // Withdraw flow
         vm.startPrank(lender);
         uint256 withdrawn = vault.redeem(shares, lender, lender);
