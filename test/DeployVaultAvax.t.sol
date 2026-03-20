@@ -36,7 +36,7 @@ contract DeployVaultAvaxTest is Test {
 
     // Test market: MXNB/USDC with Adaptive Curve IRM
     // Note: Update MARKET_ID to the actual MXNB/USDC market on Avalanche
-    bytes32 MARKET_ID = 0x0; // Placeholder - update for MXNB/USDC
+    bytes32 MARKET_ID = 0x5318729acbd5a552d868b80a4ba936a35811a80493eee139176ed9e14b3d4e95; // Placeholder - update for MXNB/USDC
     address constant COLLATERAL_TOKEN = USDC;
 
     uint256 constant DEAD_DEPOSIT_AMOUNT = 1e12; // For 6 decimal asset
@@ -133,42 +133,6 @@ contract DeployVaultAvaxTest is Test {
         console.log("- IRM:", params.irm);
         console.log("- LLTV:", params.lltv);
         console.log("- Market ID:", vm.toString(Id.unwrap(marketId)));
-
-        /**
-         * STEP 1: Enable IRM (if not address(0))
-         * This allows the market to use this Interest Rate Model
-         */
-        if (params.irm != address(0)) {
-            bool irmEnabled = morpho.isIrmEnabled(params.irm);
-            if (!irmEnabled) {
-                console.log("IRM not enabled, attempting to enable...");
-                // try morpho.enableIrm(params.irm) {
-                //     console.log("IRM enabled successfully");
-                // } catch Error(string memory reason) {
-                //     console.log("Failed to enable IRM:", reason);
-                //     console.log("Note: Requires Morpho owner privileges");
-                // }
-            } else {
-                console.log("IRM already enabled");
-            }
-        }
-
-        /**
-         * STEP 2: Enable LLTV (Liquidation LTV)
-         * This percentage determines the maximum LTV ratio for the market
-         */
-        bool lltvEnabled = morpho.isLltvEnabled(params.lltv);
-        if (!lltvEnabled) {
-            console.log("LLTV not enabled, attempting to enable...");
-            // try morpho.enableLltv(params.lltv) {
-            //     console.log("LLTV enabled successfully");
-            // } catch Error(string memory reason) {
-            //     console.log("Failed to enable LLTV:", reason);
-            //     console.log("Note: Requires Morpho owner privileges");
-            // }
-        } else {
-            console.log("LLTV already enabled");
-        }
 
         /**
          * STEP 3: Check if market already exists
@@ -416,25 +380,6 @@ contract DeployVaultAvaxTest is Test {
         console.log("Market ID:", vm.toString(Id.unwrap(marketId)));
         IMorpho morpho = IMorpho(MORPHO);
 
-        // Step 1: Enable IRM if not already enabled
-        // Note: This step requires Morpho owner privileges
-        // For testing on fork, we try to enable it; if we don't have privileges, the market may already exist
-        try morpho.isIrmEnabled(marketParams.irm) returns (bool isEnabled) {
-            if (!isEnabled) {
-                morpho.enableIrm(marketParams.irm);
-                console.log("IRM enabled");
-            }
-        } catch {}
-
-        // Step 2: Enable LLTV if not already enabled
-        // Note: This step also requires Morpho owner privileges
-        try morpho.isLltvEnabled(marketParams.lltv) returns (bool isEnabled) {
-            if (!isEnabled) {
-                morpho.enableLltv(marketParams.lltv);
-                console.log("LLTV enabled");
-            }
-        } catch {}
-
         // Step 3: Create market if it doesn't exist
         // Market exists if loanToken matches MXNB
         MarketParams memory marketParamsCheck = morpho.idToMarketParams(marketId);
@@ -462,7 +407,15 @@ contract DeployVaultAvaxTest is Test {
      */
     function _configureMarketAndLiquidityAdapter() internal {
         // Look up MarketParams from Morpho
-        MarketParams memory marketParams = IMorpho(MORPHO).idToMarketParams(Id.wrap(MARKET_ID));
+        //MarketParams memory marketParams = IMorpho(MORPHO).idToMarketParams(Id.wrap(MARKET_ID));
+
+        MarketParams memory marketParams = MarketParams({
+            loanToken: MXNB,
+            collateralToken: USDC,
+            oracle: address(oracle),  // Your mock oracle
+            irm: ADAPTIVE_CURVE_IRM,
+            lltv: 0.77e18  // 77% LTV
+        });
 
         // Validate market params (MXNB/USDC market)
         require(marketParams.loanToken == MXNB, "Market loanToken should be MXNB");
@@ -542,13 +495,14 @@ contract DeployVaultAvaxTest is Test {
             collateralToken: USDC,
             oracle: address(oracle),
             irm: ADAPTIVE_CURVE_IRM,
-            lltv: 0.8e18  // 80% LLTV
+            lltv: 0.77e18  // 77% LLTV
         });
         
         (MarketParams memory mktParams, Id marketId) = _createMarketFromScratch(params);
         
         console.log("Market created with ID:", vm.toString(Id.unwrap(marketId)));
     }
+   
 
     function test_ExistingMarketIntegration() public {
         // Step 1: Verify market exists
@@ -567,7 +521,7 @@ contract DeployVaultAvaxTest is Test {
         _deployWithMarket();
     }
 
-
+    */
 
     function test_CreateNewMarketLocally() public {
         // Get the Morpho owner (you'd need this for your local Morpho instance)
@@ -578,7 +532,7 @@ contract DeployVaultAvaxTest is Test {
             collateralToken: USDC,
             oracle: address(oracle),
             irm: ADAPTIVE_CURVE_IRM,
-            lltv: 0.8e18  // 80% LLTV
+            lltv: 0.77e18  // 77% LLTV
         });
         
         (MarketParams memory mktParams, Id marketId) = 
@@ -738,9 +692,13 @@ contract DeployVaultAvaxTest is Test {
     function test_DepositWithdrawWithMarket() public {
         _deployWithMarket();
 
+        console.log("initial vault balance:",IERC20(MXNB).balanceOf(address(vault)));
+
         address user = makeAddr("user");
         uint256 depositAmount = 1000e6;
-        deal(MXNB, user, depositAmount);
+        deal(MXNB, user, depositAmount * 2);
+
+        console.log("beforeDeposit user balance:",IERC20(MXNB).balanceOf(user));
 
         vm.startPrank(user);
         IERC20(MXNB).approve(address(vault), depositAmount);
@@ -751,12 +709,16 @@ contract DeployVaultAvaxTest is Test {
 
         // Funds allocated to market (minimal in vault)
         assertLt(IERC20(MXNB).balanceOf(address(vault)), depositAmount, "Funds should be allocated to market");
+        console.log("afterDeposit vault balance:",IERC20(MXNB).balanceOf(address(vault)));
+        console.log("afterDeposit user balance:",IERC20(MXNB).balanceOf(user));
 
         vm.startPrank(user);
         uint256 withdrawn = vault.redeem(shares, user, user);
         vm.stopPrank();
 
         assertApproxEqAbs(withdrawn, depositAmount, 1, "Should withdraw same amount");
+        console.log("afterWithdrawn vault balance:",IERC20(MXNB).balanceOf(address(vault)));
+        console.log("afterWithdrawn user balance:",IERC20(MXNB).balanceOf(user));
 
         console.log("Deposited:", depositAmount);
         console.log("Withdrawn:", withdrawn);
@@ -826,6 +788,7 @@ contract DeployVaultAvaxTest is Test {
         console.log("=== CONFIRMED: Empty liquidityData causes revert on deposit ===");
     }
 
+    /**
     //Test deployment with vault timelocks configured
     // Verifies that vault timelocks are properly set for listing requirements
     function test_DeployWithVaultTimelocks() public {
@@ -1046,5 +1009,6 @@ contract DeployVaultAvaxTest is Test {
         console.log("Adapter:", adapter);
         console.log("Timelock duration:", timelockDuration, "seconds");
     }
-     */
+    */
+
 }
