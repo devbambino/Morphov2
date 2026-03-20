@@ -724,6 +724,57 @@ contract DeployVaultAvaxTest is Test {
         console.log("Withdrawn:", withdrawn);
     }
 
+    function test_DepositBorrowRepayWithMarket() public {
+        _deployWithMarket();
+
+        console.log("initial vault balance:",IERC20(MXNB).balanceOf(address(vault)));
+
+        address lender = makeAddr("lender");
+        uint256 depositAmount = 1790e6; // 1790 MXNB = 100 USDC
+        deal(MXNB, lender, depositAmount * 2);
+
+        address borrower = makeAddr("borrower");
+        uint256 collateralAmount = 200e6; // 100 USDC = 1790 MXNB but 200 supply for 50% LTV
+        deal(MXNB, borrower, collateralAmount);
+
+        console.log("beforeDeposit lender balance:",IERC20(MXNB).balanceOf(lender));
+        console.log("beforeDeposit borrower MXN balance:",IERC20(MXNB).balanceOf(borrower));
+        console.log("beforeDeposit borrower USD balance:",IERC20(USDC).balanceOf(borrower));
+
+        vm.startPrank(lender);
+        IERC20(MXNB).approve(address(vault), depositAmount * 2);
+        uint256 shares = vault.deposit(depositAmount * 2, lender);
+        vm.stopPrank();
+
+        assertGt(shares, 0, "Should receive shares");
+
+        // Funds allocated to market (minimal in vault)
+        assertLt(IERC20(MXNB).balanceOf(address(vault)), depositAmount, "Funds should be allocated to market");
+        console.log("afterDeposit vault balance:",IERC20(MXNB).balanceOf(address(vault)));
+        console.log("afterDeposit lender balance:",IERC20(MXNB).balanceOf(lender));
+
+        // Borrow Flow
+        vm.startPrank(borrower);
+        IERC20(MXNB).approve(address(vault), collateralAmount);
+        morpho.supplyCollateral(marketParams, amountCollateral, BORROWER, hex"");
+        morpho.borrow(marketParams, amountBorrowed, 0, BORROWER, RECEIVER);
+        vm.stopPrank();
+
+        assertGt(shares, 0, "Should receive shares");
+        
+        // Withdraw flow
+        vm.startPrank(lender);
+        uint256 withdrawn = vault.redeem(shares, lender, lender);
+        vm.stopPrank();
+
+        assertApproxEqAbs(withdrawn, depositAmount, 1, "Should withdraw same amount");
+        console.log("afterWithdrawn vault balance:",IERC20(MXNB).balanceOf(address(vault)));
+        console.log("afterWithdrawn lender balance:",IERC20(MXNB).balanceOf(lender));
+
+        console.log("Deposited:", depositAmount);
+        console.log("Withdrawn:", withdrawn);
+    }
+
     function test_AdapterCaps() public {
         _deployWithoutMarket();
 

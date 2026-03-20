@@ -28,7 +28,7 @@ forge test --match-path test/DeployVaultAvax.t.sol -vvv
 forge test --match-path test/DeployVaultV2WithMarketAdapter.t.sol -vvv
 
 # Run specific test
-forge test --match-test test_DepositWithdrawWithMarket -vvv
+forge test --match-test test_DepositBorrowRepayWithMarket -vvv
 
 # Run all tests (requires fork URL)
 source .env && forge test --fork-url "$RPC_URL" -vvv
