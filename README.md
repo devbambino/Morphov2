@@ -13,6 +13,13 @@ source ~/.zshrc.
 
 #Install Foundry
 foundryup
+
+# Install opencode
+curl -fsSL https://opencode.ai/install | bash
+opencode
+/connect
+/init
+
 ```
 
 ## Running Tests

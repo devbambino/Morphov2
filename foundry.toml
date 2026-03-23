@@ -8,5 +8,9 @@ optimizer_runs = 200
 via_ir = true
 
 remappings = [
+  "morpho-blue/=lib/vault-v2/lib/morpho-blue/",
+  "morpho-blue-irm/=lib/vault-v2/lib/morpho-blue-irm/",
+  "metamorpho/=lib/vault-v2/lib/metamorpho/",
+  "metamorpho-v1.1/=lib/vault-v2/lib/metamorpho-v1.1/",
   "metamorpho-v1.1-morpho-blue/=lib/vault-v2/lib/metamorpho-v1.1/lib/morpho-blue/",
 ]

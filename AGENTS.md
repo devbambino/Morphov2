@@ -22,16 +22,16 @@ source .env && forge test --fork-url "$RPC_URL" -vvv
 # Run specific test file
 forge test --match-path test/DeployVaultAvax.t.sol -vvv
 
-# Run single test by name
+# Run single test by name (most common)
 forge test --match-test test_DepositBorrowRepayWithMarket -vvv
+
+# Run tests matching a pattern
+forge test --match-test "test_Deploy*" -vvv
 ```
 
 ### Building
 ```bash
-# Build contracts
 forge build
-
-# Clean and rebuild
 forge clean && forge build
 ```
 
@@ -39,15 +39,11 @@ forge clean && forge build
 ```bash
 # Simulation mode (no real transactions)
 source .env && forge script script/DeployVaultV2WithMarketAdapter.s.sol \
-  --fork-url "$RPC_URL" \
-  --private-key "$PRIVATE_KEY" \
-  -vvv
+  --fork-url "$RPC_URL" --private-key "$PRIVATE_KEY" -vvv
 
 # Broadcast to mainnet
 forge script script/DeployVaultV2WithMarketAdapter.s.sol \
-  --rpc-url $RPC_URL \
-  --private-key $PRIVATE_KEY \
-  --broadcast
+  --rpc-url $RPC_URL --private-key $PRIVATE_KEY --broadcast
 ```
 
 ---
@@ -60,18 +56,14 @@ forge script script/DeployVaultV2WithMarketAdapter.s.sol \
   // SPDX-License-Identifier: GPL-2.0-or-later
   pragma solidity 0.8.28;
   ```
-- Use appropriate license for your code (this repo uses GPL-2.0-or-later)
 
-### Imports
-Organize imports in this order (blank line between groups):
-1. Foundry: `forge-std/Test.sol`, `forge-std/Script.sol`, etc.
-2. Internal/Project: `script/*.sol`, `vault-v2/interfaces/*.sol`
+### Imports (Order: blank line between groups)
+1. Foundry: `forge-std/Test.sol`, `forge-std/Script.sol`
+2. Internal/Project: `vault-v2/...`, `script/*.sol`
 3. External: `openzeppelin-contracts/...`, `morpho-blue/...`
 
-Example:
 ```solidity
 import {Test, console} from "forge-std/Test.sol";
-import {DeployMocks} from "./script/DeployMocks.s.sol";
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {IERC20} from "openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IMorpho, MarketParams} from "morpho-blue/src/interfaces/IMorpho.sol";
@@ -80,97 +72,55 @@ import {IMorpho, MarketParams} from "morpho-blue/src/interfaces/IMorpho.sol";
 ### Naming Conventions
 - **Contracts/Libraries**: `PascalCase` (e.g., `DeployVaultV2`, `EventsLib`)
 - **Interfaces**: `I` prefix + PascalCase (e.g., `IVaultV2`, `IERC20`)
-- **Functions**: `camelCase` (e.g., `setUp()`, `runWithArguments()`)
-- **State Variables**: `camelCase` (e.g., `owner`, `vaultV2Factory`)
+- **Functions/State Variables**: `camelCase` (e.g., `setUp()`, `owner`)
 - **Constants**: `UPPER_SNAKE_CASE` (e.g., `DEAD_DEPOSIT_HIGH_DECIMALS`)
 - **Events**: `UpperCamelCase` with prefix (e.g., `VaultV2__Deposit()`)
 - **Custom Errors**: `ContractName__ErrorName` (e.g., `VaultV2__Unauthorized()`)
 
-### NatSpec Documentation
-- Add NatSpec comments for all public/external functions:
-  ```solidity
-  /**
-   * @notice Deploys a new VaultV2 instance
-   * @dev Calls the factory to create a new vault with given parameters
-   * @param owner The address that will own the vault
-   * @return The newly created vault address
-   */
-  function deployVault(address owner) external returns (address);
-  ```
-- Document structs with field descriptions
-- Include `@notice`, `@dev`, `@param`, `@return` tags
-
-### Type Usage
-- Use explicit types: `uint256`, `int256`, `address`, `bytes32`, etc.
-- Avoid `var` keyword
-- Use appropriate integer sizes (uint8, uint256, etc.) based on data requirements
-- Use `address` for addresses, not `address payable` unless sending ETH
-
 ### Functions & Visibility
-- Order functions within contract: constructor → external → public → internal → private
-- Within each group, order: view → pure → nonview → nonpure
-- Mark functions as `view`/`pure` where applicable
-- Use custom errors instead of require with strings when possible
+Order: constructor → external → public → internal → private. Within groups: view → pure → nonview.
+Mark functions as `view`/`pure` where applicable.
 
 ### Error Handling
-Prefer custom errors from `ErrorsLib`:
+Use custom errors instead of `require` with strings:
 ```solidity
-// Instead of:
-require(msg.sender == owner, "Unauthorized");
-
-// Use:
 if (msg.sender != owner) revert VaultV2__Unauthorized();
 ```
 
-### Contract Structure
+### NatSpec Documentation
+Required for all public/external functions:
 ```solidity
-// SPDX-License-Identifier: GPL-2.0-or-later
-pragma solidity 0.8.28;
-
-import {Test} from "forge-std/Test.sol";
-
-import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
-
-contract DeployTest is Test {
-    address owner;
-    address asset;
-    IVaultV2 vaultV2;
-
-    function setUp() public {
-        // Setup code
-    }
-
-    function test_SomeFunctionality() public {
-        // Test code
-    }
-}
+/**
+ * @notice Deploys a new VaultV2 instance
+ * @dev Calls the factory to create a new vault
+ * @param owner The address that will own the vault
+ * @return The newly created vault address
+ */
 ```
 
 ### Testing Conventions
-- Test contracts go in `test/` directory
-- Use `.t.sol` suffix (e.g., `DeployVaultV2.t.sol`)
-- Helper scripts in `test/script/`
-- Mocks in `test/mocks/`
-- Use `vm.chainId()`, `makeAddr()`, `deal()` for test setup
+- Test files in `test/` with `.t.sol` suffix
+- Helper scripts in `test/script/`, mocks in `test/mocks/`
+- Use `vm.chainId()`, `makeAddr()`, `deal()`, `vm.prank()`
 
-### Script Conventions
-- Deployment scripts in `script/` directory
-- Use `.s.sol` suffix (e.g., `DeployVaultV2.s.sol`)
-- Inherit from `Script`
-- Use `run()` pattern for main execution
+---
 
-### Security Considerations
-- NEVER commit secrets or private keys
-- Use `.env` file for sensitive data (add to `.gitignore`)
-- Always verify addresses before use
-- Test on fork before mainnet
-- Follow Morpho listing requirements (timelocks >= 3 days, naming restrictions, etc.)
+## Project Structure
+```
+/workspaces/Morphov2
+├── script/           # Deployment scripts (.s.sol)
+├── test/             # Test files (.t.sol)
+│   ├── mocks/         # Mock contracts for testing
+│   └── script/        # Test deployment helpers
+├── archives/          # Archived/full contracts
+├── foundry.toml       # Foundry configuration
+└── AGENTS.md          # This file
+```
 
 ---
 
 ## Environment Variables
-
-Required for deployment:
+Required for deployment (store in `.env`, add to `.gitignore`):
 ```bash
 RPC_URL           # RPC endpoint
 PRIVATE_KEY       # Deployer private key
@@ -179,24 +129,30 @@ ASSET             # Underlying token (e.g., USDC)
 ADAPTER_REGISTRY  # Morpho adapter registry
 VAULT_V2_FACTORY  # VaultV2 factory address
 MORPHO_MARKET_V1_ADAPTER_V2_FACTORY  # Adapter factory
-VAULT_TIMELOCK_DURATION     # Vault timelock (259200 for listing)
-ADAPTER_TIMELOCK_DURATION   # Adapter timelock (259200 for listing)
+VAULT_TIMELOCK_DURATION     # Vault timelock (259200 = 3 days)
+ADAPTER_TIMELOCK_DURATION   # Adapter timelock (259200 = 3 days)
 ```
 
 ---
 
-## Common Issues & Troubleshooting
+## Common Issues
+
+### Phase 8 Skipped (dead deposit)
+Ensure deployer has sufficient asset tokens: 1e9 for >=10 decimals, 1e12 for <=9 decimals.
 
 ### Socket Error on macOS
 ```bash
 forge clean && source .env && forge script script/DeployVaultV2WithMarketAdapter.s.sol \
-  --fork-url "$RPC_URL" \
-  --private-key "$PRIVATE_KEY" \
-  -vvv
+  --fork-url "$RPC_URL" --private-key "$PRIVATE_KEY" -vvv
 ```
 
-### Phase 8 Skipped
-Ensure deployer has sufficient asset tokens for dead deposit (1e9-1e12 wei depending on decimals).
+---
+
+## Morpho Listing Requirements
+- **Timelocks**: Minimum 3 days (259200 seconds) for listing eligibility
+- **Naming**: Vault name/symbol CANNOT contain "morpho" (case insensitive)
+- **No Idle Liquidity**: All deposited funds must be allocated to markets
+- **Dead Deposits**: Markets must have >=1e9 shares at address(0xdead)
 
 ---
 
