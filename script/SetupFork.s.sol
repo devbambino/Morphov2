@@ -2,6 +2,7 @@
 pragma solidity 0.8.28;
 
 import {Script, console} from "forge-std/Script.sol";
+import {Test} from "forge-std/Test.sol";
 
 import {IVaultV2} from "vault-v2/interfaces/IVaultV2.sol";
 import {VaultV2} from "vault-v2/VaultV2.sol";
@@ -16,7 +17,7 @@ import {MarketParamsLib} from "morpho-blue/src/libraries/MarketParamsLib.sol";
 import {OracleMock} from "../test/mocks/OracleMock.sol";
 import {Faucet} from "../test/mocks/Faucet.sol";
 
-contract SetupFork is Script {
+contract SetupFork is Test {
     using MarketParamsLib for MarketParams;
 
     uint256 constant BLOCK_TIME = 1;
@@ -127,6 +128,8 @@ contract SetupFork is Script {
         IMorpho morpho = IMorpho(MORPHO);
         MarketParams memory mktParams = morpho.idToMarketParams(Id.wrap(marketId));
 
+        deal(MXNB, deployer, INITIAL_MXNB_LIQUIDITY);
+
         console.log("Supplying initial MXNB liquidity to market...");
         console.log("- Amount:", INITIAL_MXNB_LIQUIDITY);
 
@@ -170,12 +173,13 @@ contract SetupFork is Script {
         vault.addAdapter(adapter);
         vault.increaseAbsoluteCap(adapterIdData, type(uint128).max);
         vault.increaseRelativeCap(adapterIdData, 1e18);
+
+        _configureMarketAndLiquidityAdapter();
+
         vault.abdicate(IVaultV2.setAdapterRegistry.selector);
         vault.abdicate(IVaultV2.setReceiveSharesGate.selector);
         vault.abdicate(IVaultV2.setSendSharesGate.selector);
         vault.abdicate(IVaultV2.setReceiveAssetsGate.selector);
-
-        _configureMarketAndLiquidityAdapter();
 
         vm.stopPrank();
     }
@@ -190,11 +194,13 @@ contract SetupFork is Script {
 
         console.log("Liquidity adapter configured with market params");
 
+        deal(MXNB, deployer, DEAD_DEPOSIT_AMOUNT + 1e12);
+
         Position memory deadPosition = morpho.position(Id.wrap(marketId), address(0xdead));
         if (deadPosition.supplyShares < DEAD_DEPOSIT_AMOUNT) {
-            vm.prank(deployer);
+            vm.stopPrank();
+            vm.startPrank(deployer);
             IERC20(MXNB).approve(MORPHO, DEAD_DEPOSIT_AMOUNT);
-            vm.prank(deployer);
             morpho.supply(marketParams, DEAD_DEPOSIT_AMOUNT, 0, address(0xdead), hex"");
             console.log("Market dead deposit created:", DEAD_DEPOSIT_AMOUNT);
         } else {
@@ -223,6 +229,9 @@ contract SetupFork is Script {
         faucet.setFaucetAmount(USDC, FAUCET_AMOUNT);
         faucet.setFaucetAmount(MXNB, FAUCET_AMOUNT);
         console.log("Faucet amounts set:", FAUCET_AMOUNT);
+
+        deal(USDC, deployer, FAUCET_AMOUNT * 20);
+        deal(MXNB, deployer, FAUCET_AMOUNT * 20);
 
         vm.prank(deployer);
         IERC20(USDC).transfer(address(faucet), FAUCET_AMOUNT * 10);

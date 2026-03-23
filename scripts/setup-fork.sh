@@ -37,7 +37,7 @@ print_status "Starting anvil forked from Avalanche mainnet..."
 anvil --fork-url https://api.avax.network/ext/bc/C/rpc \
       --host 0.0.0.0 --port 8545 \
       --chain-id 43114 \
-      --account-keys ~/.foundry/accounts.json > anvil.log 2>&1 &
+      --accounts 1 > anvil.log 2>&1 &
 ANVIL_PID=$!
 
 # Wait for anvil to start
@@ -52,12 +52,14 @@ fi
 
 print_success "Anvil started (PID: $ANVIL_PID)"
 
+# Set private key as environment variable for the forge script
+export PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+
 # Run the setup fork script
 print_status "Running SetupFork.s.sol..."
 forge script script/SetupFork.s.sol \
     --rpc-url http://localhost:8545 \
     --broadcast \
-    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
     -vvv
 
 print_success "Fork setup complete!"

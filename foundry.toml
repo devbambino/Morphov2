@@ -1,11 +1,13 @@
 [profile.default]
-src = "src"
+src = "out"
 out = "out"
 libs = ["lib"]
 solc_version = "0.8.28"
 optimizer = true
 optimizer_runs = 200
 via_ir = true
+
+fs_permissions = [{ path = ".", access = "read-write" }]
 
 remappings = [
   "morpho-blue/=lib/vault-v2/lib/morpho-blue/",
