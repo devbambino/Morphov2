@@ -24,6 +24,9 @@ forge test --fork-url https://api.avax.network/ext/bc/C/rpc
 # Run Market Adapter tests with verbose output
 forge test --match-path test/DeployVaultAvax.t.sol -vvv
 
+# Run Aave tests
+forge test --match-path test/AaveV3SupplyWithdraw.t.sol -vvv
+
 # Run Market Adapter tests with verbose output
 forge test --match-path test/DeployVaultV2WithMarketAdapter.t.sol -vvv
 
