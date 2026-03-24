@@ -29,12 +29,31 @@ export function TokenBalances() {
 
     try {
       const addr = wallet.address;
-      const [usdcBal, ausdcBal, mxnbBal, vmxnbBal] = await Promise.all([
-        contracts.usdc.balanceOf(addr),
-        contracts.ausdc.balanceOf(addr),
-        contracts.mxnb.balanceOf(addr),
-        contracts.vaultV2.balanceOf(addr),
+      
+      // Fetch balances individually with error handling for each contract
+      const balanceResults = await Promise.allSettled([
+        contracts.usdc.balanceOf(addr).catch(err => {
+          console.error("USDC balanceOf failed:", err);
+          throw err;
+        }),
+        contracts.ausdc.balanceOf(addr).catch(err => {
+          console.error("aUSDC balanceOf failed:", err);
+          throw err;
+        }),
+        contracts.mxnb.balanceOf(addr).catch(err => {
+          console.error("MXNB balanceOf failed:", err);
+          throw err;
+        }),
+        contracts.vaultV2.balanceOf(addr).catch(err => {
+          console.error("Vault V2 balanceOf failed:", err);
+          throw err;
+        }),
       ]);
+
+      const usdcBal = balanceResults[0].status === "fulfilled" ? balanceResults[0].value : 0n;
+      const ausdcBal = balanceResults[1].status === "fulfilled" ? balanceResults[1].value : 0n;
+      const mxnbBal = balanceResults[2].status === "fulfilled" ? balanceResults[2].value : 0n;
+      const vmxnbBal = balanceResults[3].status === "fulfilled" ? balanceResults[3].value : 0n;
 
       setBalances({
         USDC: formatBalance(usdcBal),
@@ -44,6 +63,7 @@ export function TokenBalances() {
       });
     } catch (error) {
       console.error("Failed to fetch balances:", error);
+      console.error("Make sure the local fork is running on", process.env.NEXT_PUBLIC_RPC_URL);
     } finally {
       setLoading(false);
     }
@@ -55,11 +75,27 @@ export function TokenBalances() {
     return () => clearInterval(interval);
   }, [contracts, wallet.isConnected, wallet.address]);
 
-  if (!wallet.isConnected || !isContractsReady) {
+  if (!wallet.isConnected) {
     return (
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">Your Balances</h2>
         <p className="text-gray-500">Connect your wallet to see balances</p>
+      </div>
+    );
+  }
+
+  if (!isContractsReady) {
+    return (
+      <div className="bg-white rounded-xl shadow-sm border border-red-200 p-6 bg-red-50">
+        <h2 className="text-lg font-semibold text-gray-900 mb-4">Your Balances</h2>
+        <div className="text-red-700 text-sm">
+          <p className="font-semibold mb-2">ℹ️ Local fork not ready</p>
+          <p className="mb-2">Make sure the Anvil fork is running:</p>
+          <code className="block bg-white p-2 rounded border border-red-300 text-xs mb-2 font-mono">
+            ./scripts/setup-fork.sh
+          </code>
+          <p className="text-xs">Then update .env.local with deployed addresses from .env.fork</p>
+        </div>
       </div>
     );
   }

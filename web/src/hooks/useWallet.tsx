@@ -1,8 +1,9 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from "react";
-import { BrowserProvider, Contract, ContractRunner, Signer } from "ethers";
+import { BrowserProvider, Contract, Signer } from "ethers";
 import { config, addresses } from "@/lib/config";
+import { EthersError, retryOperation } from "@/types/errors";
 import erc20Abi from "@/lib/abis/erc20.json";
 import aavePoolAbi from "@/lib/abis/aavePool.json";
 import morphoAbi from "@/lib/abis/morpho.json";
@@ -49,18 +50,26 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   const [contracts, setContracts] = useState<ContractInterfaces | null>(null);
   const [signer, setSigner] = useState<Signer | null>(null);
   const [isContractsReady, setIsContractsReady] = useState(false);
-  
-  // Refs to track component lifecycle
+
+  // Refs to track component lifecycle and prevent memory leaks
   const isMountedRef = useRef(true);
   const providerRef = useRef<BrowserProvider | null>(null);
   const listenerSetupRef = useRef(false);
   const currentChainIdRef = useRef<number | null>(null);
+  const listenerCallbacksRef = useRef<{
+    handleAccountsChanged: ((accounts: string[]) => void) | null;
+    handleChainChanged: ((chainIdHex: string) => void) | null;
+  }>({
+    handleAccountsChanged: null,
+    handleChainChanged: null,
+  });
 
-  // Disconnect function with proper logging
+  /**
+   * Reset wallet state when disconnecting
+   */
   const disconnect = useCallback(() => {
     console.log("[useWallet] Disconnect called");
-    console.trace("[useWallet] Disconnect stack trace");
-    
+
     if (!isMountedRef.current) {
       console.log("[useWallet] Component not mounted, skipping disconnect");
       return;
@@ -78,10 +87,57 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setIsContractsReady(false);
   }, []);
 
-  // Connect function with proper error handling
+  /**
+   * Create contract instances with error handling
+   */
+  const createContractInstances = useCallback(
+    (signer: Signer) => {
+      try {
+        console.log("[useWallet] Creating contract instances...");
+
+        // Verify all required addresses are present
+        const requiredAddresses = {
+          usdc: addresses.usdc,
+          mxnb: addresses.mxnb,
+          ausdc: addresses.ausdc,
+          aavePool: addresses.aavePool,
+          morpho: addresses.morpho,
+          vaultV2: addresses.vaultV2,
+          faucet: addresses.faucet,
+        };
+
+        for (const [key, address] of Object.entries(requiredAddresses)) {
+          if (!address) {
+            console.warn(`[useWallet] Missing address for ${key}`);
+          }
+        }
+
+        const contractInstances: ContractInterfaces = {
+          usdc: new Contract(addresses.usdc, erc20Abi, signer),
+          mxnb: new Contract(addresses.mxnb, erc20Abi, signer),
+          ausdc: new Contract(addresses.ausdc, erc20Abi, signer),
+          aavePool: new Contract(addresses.aavePool, aavePoolAbi, signer),
+          morpho: new Contract(addresses.morpho, morphoAbi, signer),
+          vaultV2: new Contract(addresses.vaultV2, vaultV2Abi, signer),
+          faucet: new Contract(addresses.faucet, faucetAbi, signer),
+        };
+
+        console.log("[useWallet] ✓ Contract instances created successfully");
+        return contractInstances;
+      } catch (error) {
+        console.error("[useWallet] Error creating contract instances:", error);
+        throw error;
+      }
+    },
+    []
+  );
+
+  /**
+   * Connect wallet with retry logic
+   */
   const connect = useCallback(async () => {
-    console.log("[useWallet] Connect clicked");
-    
+    console.log("[useWallet] Connect initiated");
+
     if (typeof window === "undefined") {
       console.error("[useWallet] Window is undefined");
       return;
@@ -89,7 +145,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
     const ethereum = (window as any).ethereum;
     if (!ethereum) {
-      alert("MetaMask is not installed");
+      console.error("[useWallet] MetaMask is not installed");
       return;
     }
 
@@ -101,96 +157,81 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     setWallet((prev) => ({ ...prev, isConnecting: true }));
 
     try {
-      console.log("[useWallet] Requesting accounts...");
-      // Create a fresh provider for this connection
-      const provider = new BrowserProvider(ethereum);
-      providerRef.current = provider;
+      // Use retry logic for connection attempt
+      await retryOperation(async () => {
+        console.log("[useWallet] Requesting accounts...");
+        const provider = new BrowserProvider(ethereum);
+        providerRef.current = provider;
 
-      // Request accounts
-      const accounts = await provider.send("eth_requestAccounts", []);
-      console.log("[useWallet] Got accounts:", accounts);
-
-      if (!isMountedRef.current) {
-        console.log("[useWallet] Component unmounted during account request");
-        return;
-      }
-
-      if (accounts.length === 0) {
-        throw new Error("No accounts returned from MetaMask");
-      }
-
-      // Get network info
-      const network = await provider.getNetwork();
-      console.log("[useWallet] Got network:", { chainId: network.chainId });
-
-      // Get signer
-      const newSigner = await provider.getSigner();
-      console.log("[useWallet] Got signer for address:", accounts[0]);
-
-      if (!isMountedRef.current) {
-        console.log("[useWallet] Component unmounted during signer creation");
-        return;
-      }
-
-      const address = accounts[0];
-      const chainId = Number(network.chainId);
-
-      // Store the chain ID so we can detect actual changes
-      currentChainIdRef.current = chainId;
-
-      // Update wallet state
-      console.log("[useWallet] Updating wallet state...");
-      setWallet({
-        address,
-        chainId,
-        balance: null,
-        isConnected: true,
-        isConnecting: false,
-      });
-      setSigner(newSigner);
-
-      // Create contract instances
-      try {
-        console.log("[useWallet] Creating contract instances...");
-        console.log("[useWallet] Using addresses:", {
-          usdc: addresses.usdc.substring(0, 10) + "...",
-          morpho: addresses.morpho.substring(0, 10) + "...",
-          vaultV2: addresses.vaultV2.substring(0, 10) + "...",
-        });
-
-        const usdc = new Contract(addresses.usdc, erc20Abi, newSigner);
-        const mxnb = new Contract(addresses.mxnb, erc20Abi, newSigner);
-        const ausdc = new Contract(addresses.ausdc, erc20Abi, newSigner);
-        const aavePool = new Contract(addresses.aavePool, aavePoolAbi, newSigner);
-        const morpho = new Contract(addresses.morpho, morphoAbi, newSigner);
-        const vaultV2 = new Contract(addresses.vaultV2, vaultV2Abi, newSigner);
-        const faucet = new Contract(addresses.faucet, faucetAbi, newSigner);
+        // Request accounts with retry
+        const accounts = await provider.send("eth_requestAccounts", []);
+        console.log("[useWallet] Got accounts:", accounts.length);
 
         if (!isMountedRef.current) {
-          console.log("[useWallet] Component unmounted during contract creation");
+          console.log("[useWallet] Component unmounted during account request");
           return;
         }
 
-        setContracts({ usdc, mxnb, ausdc, aavePool, morpho, vaultV2, faucet });
-        setIsContractsReady(true);
-        console.log("[useWallet] ✅ Wallet connected successfully!");
-      } catch (contractError) {
-        console.error("[useWallet] Error creating contracts:", contractError);
-        // Keep wallet connected even if contracts fail
-        console.log("[useWallet] Wallet is connected, but contracts failed to load");
-        setIsContractsReady(false);
-      }
+        if (accounts.length === 0) {
+          throw new Error("No accounts returned from MetaMask");
+        }
+
+        // Get network and signer
+        const network = await provider.getNetwork();
+        const newSigner = await provider.getSigner();
+        const address = accounts[0];
+        const chainId = Number(network.chainId);
+
+        if (!isMountedRef.current) {
+          console.log("[useWallet] Component unmounted during setup");
+          return;
+        }
+
+        // Store chain ID for change detection
+        currentChainIdRef.current = chainId;
+
+        // Update wallet state
+        setWallet({
+          address,
+          chainId,
+          balance: null,
+          isConnected: true,
+          isConnecting: false,
+        });
+        setSigner(newSigner);
+
+        // Create contracts
+        try {
+          const contractInstances = createContractInstances(newSigner);
+          if (isMountedRef.current) {
+            setContracts(contractInstances);
+            setIsContractsReady(true);
+            console.log("[useWallet] ✅ Wallet and contracts ready!");
+          }
+        } catch (contractError) {
+          console.error("[useWallet] Failed to create contracts:", contractError);
+          if (isMountedRef.current) {
+            setIsContractsReady(false);
+          }
+        }
+      }, 1); // Retry once on failure
     } catch (error) {
       console.error("[useWallet] Connection failed:", error);
       if (isMountedRef.current) {
-        setWallet((prev) => ({ ...prev, isConnecting: false, isConnected: false }));
+        setWallet((prev) => ({
+          ...prev,
+          isConnecting: false,
+          isConnected: false,
+        }));
       }
     }
-  }, []);
+  }, [createContractInstances]);
 
-  // Setup MetaMask event listeners - only once
+  /**
+   * Setup MetaMask event listeners
+   */
   useEffect(() => {
-    console.log("[useWallet] useEffect: Setting up listeners");
+    console.log("[useWallet] Setting up MetaMask listeners");
     isMountedRef.current = true;
 
     if (typeof window === "undefined") {
@@ -205,75 +246,89 @@ export function WalletProvider({ children }: { children: ReactNode }) {
 
     // Only set up listeners once
     if (listenerSetupRef.current) {
-      console.log("[useWallet] Listeners already set up, skipping");
+      console.log("[useWallet] Listeners already set up");
       return;
     }
     listenerSetupRef.current = true;
 
+    // Define listener callbacks
     const handleAccountsChanged = (accounts: string[]) => {
-      console.log("[useWallet] accountsChanged event fired with accounts:", accounts);
-      
-      if (!isMountedRef.current) {
-        console.log("[useWallet] Component not mounted, ignoring event");
-        return;
-      }
+      console.log("[useWallet] Accounts changed");
+
+      if (!isMountedRef.current) return;
 
       if (accounts.length === 0) {
         console.log("[useWallet] All accounts disconnected");
         disconnect();
       } else {
-        console.log("[useWallet] Accounts changed to:", accounts[0]);
-        // Don't reconnect automatically
+        console.log("[useWallet] Account switched to:", accounts[0]);
+        // Note: Not auto-reconnecting; user stays connected but address updates
       }
     };
 
     const handleChainChanged = (chainIdHex: string) => {
-      console.log("[useWallet] Chain changed event fired with chainId:", chainIdHex);
-      
-      if (!isMountedRef.current) {
-        console.log("[useWallet] Component not mounted, ignoring chain change");
-        return;
-      }
+      console.log("[useWallet] Chain changed to:", chainIdHex);
 
-      // Convert hex to decimal
+      if (!isMountedRef.current) return;
+
       const newChainId = parseInt(chainIdHex, 16);
-      console.log("[useWallet] Converted to decimal chainId:", newChainId);
-      console.log("[useWallet] Current stored chainId:", currentChainIdRef.current);
 
-      // Only reload if the chain actually changed
-      if (currentChainIdRef.current !== null && currentChainIdRef.current !== newChainId) {
-        console.log("[useWallet] Chain actually changed from", currentChainIdRef.current, "to", newChainId);
-        console.log("[useWallet] Reloading page due to actual chain change");
+      // Reload only if chain actually changed
+      if (
+        currentChainIdRef.current !== null &&
+        currentChainIdRef.current !== newChainId
+      ) {
+        console.log(
+          `[useWallet] Reloading due to chain change: ${currentChainIdRef.current} → ${newChainId}`
+        );
         window.location.reload();
       } else if (currentChainIdRef.current === null) {
-        console.log("[useWallet] First time setting chain, not reloading");
         currentChainIdRef.current = newChainId;
-      } else {
-        console.log("[useWallet] Chain event but same chain, no reload needed");
       }
     };
 
+    // Store callbacks for cleanup
+    listenerCallbacksRef.current = {
+      handleAccountsChanged,
+      handleChainChanged,
+    };
+
+    // Add listeners
     ethereum.on("accountsChanged", handleAccountsChanged);
     ethereum.on("chainChanged", handleChainChanged);
 
+    // Cleanup
     return () => {
-      console.log("[useWallet] useEffect cleanup: Removing listeners");
+      console.log("[useWallet] Cleaning up listeners");
       isMountedRef.current = false;
-      ethereum.removeListener("accountsChanged", handleAccountsChanged);
-      ethereum.removeListener("chainChanged", handleChainChanged);
+      const { handleAccountsChanged: acc, handleChainChanged: chain } =
+        listenerCallbacksRef.current;
+      if (acc) ethereum.removeListener("accountsChanged", acc);
+      if (chain) ethereum.removeListener("chainChanged", chain);
     };
   }, [disconnect]);
 
-  // Cleanup on unmount
+  /**
+   * Mark unmounted on component cleanup
+   */
   useEffect(() => {
     return () => {
-      console.log("[useWallet] Component unmounting");
+      console.log("[useWallet] Provider unmounting");
       isMountedRef.current = false;
     };
   }, []);
 
   return (
-    <WalletContext.Provider value={{ wallet, connect, disconnect, contracts, isContractsReady, signer }}>
+    <WalletContext.Provider
+      value={{
+        wallet,
+        connect,
+        disconnect,
+        contracts,
+        isContractsReady,
+        signer,
+      }}
+    >
       {children}
     </WalletContext.Provider>
   );

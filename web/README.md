@@ -39,6 +39,7 @@ In a separate terminal, run:
 # From project root
 cd ..
 pkill -f anvil
+forge test --match-path test/AaveV3Morpho.t.sol -vvv --fork-url https://api.avax.network/ext/bc/C/rpc --fork-block-number 80779000 2>&1 | tail -30
 ./scripts/setup-fork.sh
 ```
 

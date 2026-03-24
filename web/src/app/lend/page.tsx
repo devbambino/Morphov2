@@ -4,15 +4,18 @@ import { useState, useEffect } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { TokenBalances } from "@/components/TokenBalances";
 import { WalletConnect } from "@/components/WalletConnect";
+import { ErrorModal } from "@/components/ErrorModal";
+import { parseEthersError, retryOperation } from "@/types/errors";
 import { ethers } from "ethers";
-import { config, addresses } from "@/lib/config";
+import { addresses } from "@/lib/config";
 
 export default function LendPage() {
   const { wallet, contracts, isContractsReady } = useWallet();
-  
+
   const [depositAmount, setDepositAmount] = useState("");
   const [loading, setLoading] = useState<string | null>(null);
   const [status, setStatus] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [errorModal, setErrorModal] = useState<{ isOpen: boolean; title: string; message: string; onRetry?: () => void } | null>(null);
   const [vaultInfo, setVaultInfo] = useState({
     totalAssets: "0",
     totalShares: "0",
@@ -24,6 +27,15 @@ export default function LendPage() {
     setTimeout(() => setStatus(null), 5000);
   };
 
+  const showError = (title: string, message: string, onRetry?: () => void) => {
+    setErrorModal({ isOpen: true, title, message, onRetry });
+    showStatus("error", title);
+  };
+
+  const closeErrorModal = () => {
+    setErrorModal((prev) => (prev ? { ...prev, isOpen: false } : null));
+  };
+
   const toWei = (amount: string, decimals = 6) => {
     return ethers.parseUnits(amount || "0", decimals);
   };
@@ -32,7 +44,7 @@ export default function LendPage() {
     return ethers.formatUnits(val, decimals);
   };
 
-  // Fetch vault info
+  // Fetch vault info with error handling
   const fetchVaultInfo = async () => {
     if (!contracts || !wallet.address) return;
 
@@ -46,11 +58,12 @@ export default function LendPage() {
       const userAssets = Number(fromWei(userShares));
       const vaultAssets = Number(fromWei(totalAssets));
       const vaultShares = Number(fromWei(totalSupply));
-      
+
       // Calculate yield (rough estimate)
-      const yieldEarned = vaultShares > 0 
-        ? Math.max(0, userAssets - (userShares * vaultAssets / vaultShares)).toFixed(2)
-        : "0";
+      const yieldEarned =
+        vaultShares > 0
+          ? Math.max(0, userAssets - (userShares * vaultAssets) / vaultShares).toFixed(2)
+          : "0";
 
       setVaultInfo({
         totalAssets: vaultAssets.toLocaleString("en-US", { maximumFractionDigits: 2 }),
@@ -70,55 +83,64 @@ export default function LendPage() {
     }
   }, [wallet.isConnected, isContractsReady, wallet.address]);
 
-  // Deposit MXNB to Vault
+  // Deposit MXNB to Vault with retry
   const depositToVault = async () => {
     if (!contracts || !depositAmount) return;
     setLoading("deposit");
+
+    const retry = async () => {
+      setLoading("deposit");
+      depositToVault();
+    };
+
     try {
-      const amount = toWei(depositAmount);
-      await contracts.mxnb.approve(addresses.vaultV2, amount);
-      const tx = await contracts.vaultV2.deposit(amount, wallet.address);
-      await tx.wait();
+      await retryOperation(async () => {
+        const amount = toWei(depositAmount);
+        const approveTx = await contracts.mxnb.approve(addresses.vaultV2, amount);
+        await approveTx.wait();
+
+        const tx = await contracts.vaultV2.deposit(amount, wallet.address);
+        await tx.wait();
+      }, 1);
+
       showStatus("success", `Deposited ${depositAmount} MXNB to vault`);
       setDepositAmount("");
       fetchVaultInfo();
-    } catch (error: unknown) {
-      console.error(error);
-      const err = error as { code?: number; message?: string };
-      showStatus("error", err.message || "Transaction failed");
+    } catch (error) {
+      const parsed = parseEthersError(error);
+      showError("Deposit Failed", parsed.message, retry);
     } finally {
       setLoading(null);
     }
   };
 
-  // Redeem vault shares for MXNB
-  const redeemFromVault = async (redeemAll = false) => {
+  // Redeem vault shares for MXNB with retry
+  const redeemFromVault = async () => {
     if (!contracts) return;
     setLoading("redeem");
+
+    const retry = async () => {
+      setLoading("redeem");
+      redeemFromVault();
+    };
+
     try {
-      let shares;
-      if (redeemAll) {
-        shares = await contracts.vaultV2.balanceOf(wallet.address);
-      } else {
-        showStatus("error", "Please specify amount to redeem");
-        setLoading(null);
-        return;
-      }
+      await retryOperation(async () => {
+        const shares = await contracts.vaultV2.balanceOf(wallet.address);
 
-      if (shares === 0n) {
-        showStatus("error", "No shares to redeem");
-        setLoading(null);
-        return;
-      }
+        if (shares === 0n) {
+          throw new Error("No shares to redeem");
+        }
 
-      const tx = await contracts.vaultV2.redeem(shares, wallet.address, wallet.address);
-      await tx.wait();
+        const tx = await contracts.vaultV2.redeem(shares, wallet.address, wallet.address);
+        await tx.wait();
+      }, 1);
+
       showStatus("success", "Redeemed all vault shares for MXNB");
       fetchVaultInfo();
-    } catch (error: unknown) {
-      console.error(error);
-      const err = error as { code?: number; message?: string };
-      showStatus("error", err.message || "Transaction failed");
+    } catch (error) {
+      const parsed = parseEthersError(error);
+      showError("Redeem Failed", parsed.message, retry);
     } finally {
       setLoading(null);
     }
@@ -157,7 +179,7 @@ export default function LendPage() {
       <div className="max-w-4xl mx-auto">
         <h1 className="text-2xl font-bold mb-6">Lend MXNB</h1>
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
-          <WalletConnect/>
+          <WalletConnect />
         </div>
       </div>
     );
@@ -177,6 +199,17 @@ export default function LendPage() {
         </div>
       )}
 
+      {errorModal && (
+        <ErrorModal
+          isOpen={errorModal.isOpen}
+          title={errorModal.title}
+          message={errorModal.message}
+          onClose={closeErrorModal}
+          onRetry={errorModal.onRetry}
+          showRetry={!!errorModal.onRetry}
+        />
+      )}
+
       <div className="space-y-6">
         {/* Step 1: Deposit MXNB to Vault */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -192,7 +225,7 @@ export default function LendPage() {
               placeholder="Amount"
               className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-transparent"
             />
-            <ActionButton onClick={depositToVault} label="Deposit to Vault" disabled={!depositAmount} />
+            <ActionButton onClick={depositToVault} label="Deposit to Vault" disabled={!depositAmount || !isContractsReady} />
           </div>
         </div>
 
@@ -221,11 +254,11 @@ export default function LendPage() {
           <p className="text-sm text-gray-500 mb-4">
             Redeem your vault shares to withdraw your MXNB along with earned yield.
           </p>
-          <ActionButton 
-            onClick={() => redeemFromVault(true)} 
-            label="Redeem All" 
+          <ActionButton
+            onClick={redeemFromVault}
+            label="Redeem All"
             variant="danger"
-            disabled={!isContractsReady} 
+            disabled={!isContractsReady}
           />
         </div>
 
