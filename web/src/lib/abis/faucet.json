@@ -7,7 +7,9 @@
     "type": "constructor"
   },
   {
-    "inputs": [],
+    "inputs": [
+      { "internalType": "address", "name": "token", "type": "address" }
+    ],
     "name": "claim",
     "outputs": [],
     "stateMutability": "nonpayable",
