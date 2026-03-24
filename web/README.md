@@ -45,10 +45,10 @@ forge test --match-path test/AaveV3Morpho.t.sol -vvv --fork-url https://api.avax
 
 Or manually:
 ```bash
-anvil --fork-url https://api.avax.network/ext/bc/C/rpc --host 0.0.0.0 --port 8545 --chain-id 43114
+anvil --fork-url https://api.avax.network/ext/bc/C/rpc --host 0.0.0.0 --port 8545 --chain-id 43114 --accounts 1 > anvil.log 2>&1
 
 # In another terminal, deploy the fork setup
-forge script script/SetupFork.s.sol --rpc-url http://localhost:8545 --broadcast --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+forge script script/SetupFork.s.sol --rpc-url http://localhost:8545 --broadcast -vvv
 ```
 
 ### 3. Configure Environment
