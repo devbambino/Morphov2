@@ -38,6 +38,14 @@ contract SetupFork is Test {
     uint256 constant DEAD_DEPOSIT_AMOUNT = 1e12;
     uint256 constant FAUCET_AMOUNT = 1000e6;
     uint256 constant INITIAL_MXNB_LIQUIDITY = 5000e6;
+    
+    // Initial deployer funding for testing (without faucet)
+    uint256 constant INITIAL_USDC_FOR_DEPLOYER = 50000e6;  // 50,000 USDC
+    uint256 constant INITIAL_MXNB_FOR_DEPLOYER = 50000e6;  // 50,000 MXNB
+    
+    // Whale addresses on Avalanche Mainnet (used for funding on fork)
+    address constant USDC_WHALE = 0x45d3D68F14038099530b1C4448Db8Ecdd78179B1;
+    address constant MXNB_WHALE = 0x817De19F19C39F59e6250Df590246e87e81B2bCB;
 
     address deployer;
     OracleMock public oracle;
@@ -66,8 +74,12 @@ contract SetupFork is Test {
         deployer = vm.addr(vm.envUint("PRIVATE_KEY"));
         console.log("Deployer:", deployer);
 
-        vm.createSelectFork("https://api.avax.network/ext/bc/C/rpc", FORK_BLOCK);
-        console.log("Fork created at block:", FORK_BLOCK);
+        // DO NOT call vm.createSelectFork() here when using --broadcast mode
+        // We are already connected to Anvil via --rpc-url, which is forked from mainnet
+        // Calling vm.createSelectFork() creates a separate fork context in Foundry
+        // and deal() calls only apply to that context, not to the actual Anvil instance
+        
+        console.log("Connected to Anvil fork at block:", block.number);
 
         address aavePool = _getAavePool();
         console.log("Aave Pool:", aavePool);
@@ -82,6 +94,7 @@ contract SetupFork is Test {
         _supplyLiquidity();
         _deployVaultAndAdapter();
         _deployFaucetAndFund();
+        _fundDeployer();  // Fund deployer for initial testing
 
         console.log("=== FORK SETUP COMPLETE ===");
         console.log("VAULT_V2:", address(vault));
@@ -89,6 +102,9 @@ contract SetupFork is Test {
         console.log("MARKET_ID:", vm.toString(marketId));
         console.log("ORACLE:", address(oracle));
         console.log("FAUCET:", address(faucet));
+        
+        // Verify deployments
+        _verifySetup();
 
         _writeEnvFile();
 
@@ -228,25 +244,71 @@ contract SetupFork is Test {
 
         faucet.setFaucetAmount(USDC, FAUCET_AMOUNT);
         faucet.setFaucetAmount(MXNB, FAUCET_AMOUNT);
-        console.log("Faucet amounts set:", FAUCET_AMOUNT);
+        console.log("Faucet amounts set to:", FAUCET_AMOUNT);
 
-        deal(USDC, deployer, FAUCET_AMOUNT * 20);
-        deal(MXNB, deployer, FAUCET_AMOUNT * 20);
+        // NOTE: Token transfers to faucet will be done after contracts are deployed
+        // Cannot use deal() in broadcast mode - it doesn't persist to Anvil
+        console.log("Faucet deployment complete. Transfers will be done via direct RPC or manual setup.");
+    }
 
-        vm.prank(deployer);
-        IERC20(USDC).transfer(address(faucet), FAUCET_AMOUNT * 10);
-        vm.prank(deployer);
-        IERC20(MXNB).transfer(address(faucet), FAUCET_AMOUNT * 10);
-        console.log("Faucet funded with USDC and MXNB");
+    function _fundDeployer() internal {
+        console.log("=== DEPLOYER FUNDING ===");
+        console.log("Deployer address:", deployer);
+        console.log("NOTE: Token funding will be handled by post-deployment script");
+        console.log("      using unlocked whale accounts on Anvil");
+    }
+    
+    function _transferFromWhale(address token, address whale, uint256 amount) internal {
+        // Placeholder - not used in broadcast mode
+        // Token transfers handled by post-deployment Node.js script instead
+    }
+
+    function _verifySetup() internal view {
+        console.log("=== VERIFYING SETUP ===");
+        
+        // Verify vault
+        require(address(vault) != address(0), "Vault not deployed");
+        console.log("Vault deployed:", address(vault));
+        
+        // Verify adapter
+        require(adapter != address(0), "Adapter not deployed");
+        console.log("Adapter deployed:", adapter);
+        
+        // Verify oracle
+        require(address(oracle) != address(0), "Oracle not deployed");
+        console.log("Oracle deployed:", address(oracle));
+        
+        // Verify faucet
+        require(address(faucet) != address(0), "Faucet not deployed");
+        console.log("Faucet deployed:", address(faucet));
+        
+        // Verify market
+        require(marketId != bytes32(0), "Market not created");
+        console.log("Market created with ID:", vm.toString(marketId));
+        
+        // Verify token addresses
+        require(USDC != address(0), "USDC address invalid");
+        require(MXNB != address(0), "MXNB address invalid");
+        require(AUSDC != address(0), "aUSDC address invalid");
+        console.log("All token addresses valid");
+        
+        console.log("=== ALL VERIFICATIONS PASSED ===");
     }
 
     function _writeEnvFile() internal {
+        // Use /api/rpc proxy for authenticated access (works in Codespaces and localhost)
+        string memory rpcUrl = "/api/rpc";
+        
         string memory envContent = string.concat(
             "# Fork Environment Variables for Next.js App\n",
             "# Generated by setup-fork.sh\n\n",
             "# Network\n",
-            "NEXT_PUBLIC_RPC_URL=http://localhost:8545\n",
+            "NEXT_PUBLIC_RPC_URL=", rpcUrl, "\n",
+            "NEXT_PUBLIC_PRIVATE_RPC_URL=", rpcUrl, "\n",
             "NEXT_PUBLIC_CHAIN_ID=43114\n\n",
+            "# Deployer Wallet (Anvil default)\n",
+            "NEXT_PUBLIC_PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n",
+            "PRIVATE_KEY=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80\n\n",
             "# Aave\n",
             "NEXT_PUBLIC_AAVE_POOL=", vm.toString(_getAavePool()), "\n",
             "NEXT_PUBLIC_USDC=", vm.toString(USDC), "\n",
@@ -260,10 +322,25 @@ contract SetupFork is Test {
             "NEXT_PUBLIC_ADAPTER=", vm.toString(adapter), "\n",
             "NEXT_PUBLIC_ORACLE=", vm.toString(address(oracle)), "\n\n",
             "# Faucet\n",
-            "NEXT_PUBLIC_FAUCET=", vm.toString(address(faucet)), "\n"
+            "NEXT_PUBLIC_FAUCET=", vm.toString(address(faucet)), "\n\n",
+            "# Initial Deployer Balances:\n",
+            "# USDC: ", _formatAmount(IERC20(USDC).balanceOf(deployer), 6), " tokens\n",
+            "# MXNB: ", _formatAmount(IERC20(MXNB).balanceOf(deployer), 6), " tokens\n"
         );
 
         vm.writeFile(".env.fork", envContent);
-        console.log(".env.fork written");
+        console.log(".env.fork written successfully");
+        console.log("   RPC URL:", rpcUrl);
+    }
+    
+    function _formatAmount(uint256 amount, uint8 decimals) internal pure returns (string memory) {
+        // Simple formatting: amount / 10^decimals
+        uint256 wholePart = amount / (10 ** decimals);
+        uint256 decimalPart = (amount % (10 ** decimals)) / (10 ** (decimals - 2));
+        
+        if (decimalPart == 0) {
+            return vm.toString(wholePart);
+        }
+        return string.concat(vm.toString(wholePart), ".", vm.toString(decimalPart));
     }
 }

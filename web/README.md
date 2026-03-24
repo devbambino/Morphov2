@@ -44,6 +44,9 @@ forge test --match-path test/AaveV3Morpho.t.sol -vvv --fork-url https://api.avax
 
 ./scripts/setup-fork.sh
 
+python3 scripts/fund-deployer-from-whales.js
+python3 scripts/fund-deployer-from-usd-whale.js
+
 ps aux | grep anvil | grep -v grep
 ```
 
