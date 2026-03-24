@@ -2,6 +2,7 @@
 
 import { ReactNode } from "react";
 import { WalletProvider, useWallet } from "@/hooks/useWallet";
+import { WalletConnect } from "@/components/WalletConnect";
 import "./globals.css";
 
 function Header() {
@@ -26,18 +27,7 @@ function Header() {
               </a>
             </nav>
           </div>
-          {wallet.isConnected ? (
-            <div className="flex items-center gap-4">
-              <span className="text-sm text-gray-600">
-                {formatAddress(wallet.address!)}
-              </span>
-              <span className="px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">
-                Connected
-              </span>
-            </div>
-          ) : (
-            <span className="text-sm text-gray-400">Connect wallet to start</span>
-          )}
+          <WalletConnect/>
         </div>
       </div>
     </header>

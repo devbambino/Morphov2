@@ -54,6 +54,7 @@ forge script script/SetupFork.s.sol --rpc-url http://localhost:8545 --broadcast 
 ```bash
 # Copy the fork environment file
 cp web/.env.fork web/.env.local
+cp .env.fork web/.env.local
 
 # Edit web/.env.local with the deployed addresses from .env.fork
 # Update these variables:

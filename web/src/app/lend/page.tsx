@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { useWallet } from "@/hooks/useWallet";
 import { TokenBalances } from "@/components/TokenBalances";
+import { WalletConnect } from "@/components/WalletConnect";
 import { ethers } from "ethers";
 import { config, addresses } from "@/lib/config";
 
@@ -154,9 +155,9 @@ export default function LendPage() {
   if (!wallet.isConnected) {
     return (
       <div className="max-w-4xl mx-auto">
-        <h1 className="text-2xl font-bold text-gray-900 mb-6">Lend MXNB</h1>
+        <h1 className="text-2xl font-bold mb-6">Lend MXNB</h1>
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8 text-center">
-          <p className="text-gray-500 mb-4">Connect your wallet to start lending</p>
+          <WalletConnect/>
         </div>
       </div>
     );
