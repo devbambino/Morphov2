@@ -38,6 +38,7 @@ In a separate terminal, run:
 ```bash
 # From project root
 cd ..
+pkill -f anvil
 ./scripts/setup-fork.sh
 ```
 
