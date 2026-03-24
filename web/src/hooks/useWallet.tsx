@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useRef, useCallback, ReactNode } from "react";
-import { BrowserProvider, Contract, Signer } from "ethers";
+import { BrowserProvider, Contract, Signer, Wallet, JsonRpcProvider } from "ethers";
 import { config, addresses } from "@/lib/config";
 import { EthersError, retryOperation } from "@/types/errors";
 import erc20Abi from "@/lib/abis/erc20.json";
@@ -10,12 +10,15 @@ import morphoAbi from "@/lib/abis/morpho.json";
 import vaultV2Abi from "@/lib/abis/vaultV2.json";
 import faucetAbi from "@/lib/abis/faucet.json";
 
+type WalletType = "anvil" | "metamask" | null;
+
 interface WalletState {
   address: string | null;
   chainId: number | null;
   balance: string | null;
   isConnected: boolean;
   isConnecting: boolean;
+  walletType: WalletType;
 }
 
 interface ContractInterfaces {
@@ -31,6 +34,7 @@ interface ContractInterfaces {
 interface WalletContextType {
   wallet: WalletState;
   connect: () => Promise<void>;
+  connectWithPrivateKey: () => Promise<void>;
   disconnect: () => void;
   contracts: ContractInterfaces | null;
   isContractsReady: boolean;
@@ -46,6 +50,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
     balance: null,
     isConnected: false,
     isConnecting: false,
+    walletType: null,
   });
   const [contracts, setContracts] = useState<ContractInterfaces | null>(null);
   const [signer, setSigner] = useState<Signer | null>(null);
@@ -54,6 +59,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   // Refs to track component lifecycle and prevent memory leaks
   const isMountedRef = useRef(true);
   const providerRef = useRef<BrowserProvider | null>(null);
+  const rpcProviderRef = useRef<JsonRpcProvider | null>(null);
   const listenerSetupRef = useRef(false);
   const currentChainIdRef = useRef<number | null>(null);
   const listenerCallbacksRef = useRef<{
@@ -81,6 +87,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       balance: null,
       isConnected: false,
       isConnecting: false,
+      walletType: null,
     });
     setContracts(null);
     setSigner(null);
@@ -133,10 +140,158 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   );
 
   /**
-   * Connect wallet with retry logic
+   * Connect wallet with Anvil deployer private key
+   */
+  const connectWithPrivateKey = useCallback(async () => {
+    console.log("[useWallet] Connect with private key initiated");
+    console.log("[useWallet] Private RPC URL:", config.privateRpcUrl);
+
+    if (!config.deployerPrivateKey) {
+      console.error("[useWallet] Deployer private key not configured");
+      return;
+    }
+
+    if (!isMountedRef.current) {
+      console.log("[useWallet] Component not mounted, aborting connect");
+      return;
+    }
+
+    setWallet((prev) => ({ ...prev, isConnecting: true }));
+
+    try {
+      // Resolve RPC URL - convert relative paths to full URLs
+      let rpcUrl = config.privateRpcUrl;
+      if (rpcUrl.startsWith("/")) {
+        if (typeof window === "undefined") {
+          throw new Error(
+            "Cannot use relative RPC URL in server context. Use absolute URL."
+          );
+        }
+        rpcUrl = window.location.origin + rpcUrl;
+        console.log("[useWallet] Resolved relative RPC URL to:", rpcUrl);
+      }
+
+      // Test RPC connectivity first with a simple JSON-RPC call
+      console.log("[useWallet] Testing RPC connectivity...");
+      try {
+        const testResponse = (await Promise.race([
+          fetch(rpcUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "eth_chainId",
+              params: [],
+              id: 1,
+            }),
+          }),
+          new Promise<Response>((_, reject) =>
+            setTimeout(() => reject(new Error("RPC connection timeout")), 8000)
+          ),
+        ])) as Response;
+
+        if (!testResponse.ok) {
+          console.warn(
+            `[useWallet] RPC server returned status ${testResponse.status}`
+          );
+        }
+        console.log("[useWallet] ✓ RPC connectivity test passed");
+      } catch (testError) {
+        console.error("[useWallet] RPC connectivity test failed:", testError);
+        console.warn(
+          "[useWallet] Make sure Anvil is running and accessible at:",
+          rpcUrl
+        );
+        if (isMountedRef.current) {
+          setWallet((prev) => ({
+            ...prev,
+            isConnecting: false,
+          }));
+        }
+        throw testError;
+      }
+
+      // Create RPC provider
+      const rpcProvider = new JsonRpcProvider(rpcUrl, {
+        name: "Avalanche",
+        chainId: config.chainId,
+      });
+      rpcProviderRef.current = rpcProvider;
+
+      console.log("[useWallet] Getting network info...");
+      const network = await Promise.race([
+        rpcProvider.getNetwork(),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("Network info timeout")), 8000)
+        ),
+      ]);
+
+      // Create signer from private key
+      console.log("[useWallet] Creating wallet from private key...");
+      const walletInstance = new Wallet(config.deployerPrivateKey, rpcProvider);
+      const address = walletInstance.address;
+      const chainId = Number((network as any).chainId);
+
+      console.log("[useWallet] Wallet address:", address);
+      console.log("[useWallet] Chain ID:", chainId);
+
+      if (!isMountedRef.current) {
+        console.log("[useWallet] Component unmounted during setup");
+        return;
+      }
+
+      // Store chain ID for change detection
+      currentChainIdRef.current = chainId;
+
+      // Update wallet state
+      setWallet({
+        address,
+        chainId,
+        balance: null,
+        isConnected: true,
+        isConnecting: false,
+        walletType: "anvil",
+      });
+      setSigner(walletInstance);
+
+      // Create contracts
+      try {
+        const contractInstances = createContractInstances(walletInstance);
+        if (isMountedRef.current) {
+          setContracts(contractInstances);
+          setIsContractsReady(true);
+          console.log("[useWallet] ✅ Anvil wallet and contracts ready!");
+        }
+      } catch (contractError) {
+        console.error("[useWallet] Failed to create contracts:", contractError);
+        if (isMountedRef.current) {
+          setIsContractsReady(false);
+        }
+      }
+    } catch (error) {
+      console.error("[useWallet] Private key connection failed:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      console.error("[useWallet] Error details:", errorMessage);
+
+      if (isMountedRef.current) {
+        setWallet((prev) => ({
+          ...prev,
+          isConnecting: false,
+          isConnected: false,
+          walletType: null,
+        }));
+      }
+    }
+  }, [createContractInstances]);
+
+  /**
+   * Connect wallet with MetaMask
    */
   const connect = useCallback(async () => {
-    console.log("[useWallet] Connect initiated");
+    console.log("[useWallet] MetaMask connect initiated");
 
     if (typeof window === "undefined") {
       console.error("[useWallet] Window is undefined");
@@ -154,12 +309,17 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       return;
     }
 
+    // Disconnect from Anvil first if connected
+    if (wallet.walletType === "anvil") {
+      disconnect();
+    }
+
     setWallet((prev) => ({ ...prev, isConnecting: true }));
 
     try {
       // Use retry logic for connection attempt
       await retryOperation(async () => {
-        console.log("[useWallet] Requesting accounts...");
+        console.log("[useWallet] Requesting MetaMask accounts...");
         const provider = new BrowserProvider(ethereum);
         providerRef.current = provider;
 
@@ -197,6 +357,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
           balance: null,
           isConnected: true,
           isConnecting: false,
+          walletType: "metamask",
         });
         setSigner(newSigner);
 
@@ -216,16 +377,41 @@ export function WalletProvider({ children }: { children: ReactNode }) {
         }
       }, 1); // Retry once on failure
     } catch (error) {
-      console.error("[useWallet] Connection failed:", error);
+      console.error("[useWallet] MetaMask connection failed:", error);
       if (isMountedRef.current) {
         setWallet((prev) => ({
           ...prev,
           isConnecting: false,
           isConnected: false,
+          walletType: null,
         }));
       }
     }
-  }, [createContractInstances]);
+  }, [createContractInstances, wallet.walletType, disconnect]);
+
+  /**
+   * Auto-connect with Anvil deployer wallet on mount
+   */
+  useEffect(() => {
+    console.log("[useWallet] Mount: Attempting auto-connect with Anvil deployer wallet");
+    isMountedRef.current = true;
+
+    const autoConnect = async () => {
+      if (!wallet.isConnected && config.deployerPrivateKey) {
+        try {
+          await connectWithPrivateKey();
+        } catch (error) {
+          console.log("[useWallet] Auto-connect with private key failed (Anvil may not be running). User can still connect with MetaMask.");
+        }
+      }
+    };
+
+    autoConnect();
+
+    return () => {
+      console.log("[useWallet] Mount effect cleanup");
+    };
+  }, []); // Only run on mount
 
   /**
    * Setup MetaMask event listeners
@@ -323,6 +509,7 @@ export function WalletProvider({ children }: { children: ReactNode }) {
       value={{
         wallet,
         connect,
+        connectWithPrivateKey,
         disconnect,
         contracts,
         isContractsReady,

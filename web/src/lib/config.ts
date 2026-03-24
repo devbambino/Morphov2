@@ -1,6 +1,8 @@
 export const config = {
   rpcUrl: process.env.NEXT_PUBLIC_RPC_URL || "http://localhost:8545",
+  privateRpcUrl: process.env.NEXT_PUBLIC_PRIVATE_RPC_URL || "/api/rpc",
   chainId: parseInt(process.env.NEXT_PUBLIC_CHAIN_ID || "43114", 10),
+  deployerPrivateKey: process.env.NEXT_PUBLIC_PRIVATE_KEY || "",
   
   aavePool: process.env.NEXT_PUBLIC_AAVE_POOL || "",
   usdc: process.env.NEXT_PUBLIC_USDC || "",
