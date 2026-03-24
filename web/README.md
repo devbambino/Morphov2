@@ -70,8 +70,7 @@ cp .env.fork web/.env.local
 ### 4. Start the App
 
 ```bash
-cd web
-npm run dev
+cd web & npm run dev
 ```
 
 ### 5. Open in Browser

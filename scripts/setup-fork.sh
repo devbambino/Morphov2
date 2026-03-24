@@ -51,18 +51,24 @@ if ! kill -0 $ANVIL_PID 2>/dev/null; then
 fi
 
 print_success "Anvil started (PID: $ANVIL_PID)"
+print_status "Anvil is running in the background. To view logs: tail -f anvil.log"
+print_status ""
 
 # Set private key as environment variable for the forge script
 export PRIVATE_KEY="0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 
 # Run the setup fork script
 print_status "Running SetupFork.s.sol..."
-forge script script/SetupFork.s.sol \
+if forge script script/SetupFork.s.sol \
     --rpc-url http://localhost:8545 \
     --broadcast \
-    -vvv
-
-print_success "Fork setup complete!"
+    -vvv; then
+    print_success "Fork setup complete!"
+else
+    print_error "Forge script failed, but anvil is still running on port 8545"
+    print_status "Anvil logs: tail -f anvil.log"
+    exit 1
+fi
 print_status "Environment variables written to .env.fork"
 print_status ""
 print_status "To start the Next.js app:"
